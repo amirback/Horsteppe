@@ -224,7 +224,7 @@ export const content: Record<Lang, Dict> = {
       columns: [
         {
           title: "Ядро конвейера",
-          state: "Работает в движке",
+          state: "В закрытом тесте",
           items: [
             "Идея → сценарий → сцены",
             "Генерация кадров и промптов",
@@ -284,7 +284,7 @@ export const content: Record<Lang, Dict> = {
         },
         {
           q: "На каких языках может говорить ролик?",
-          a: "Сценарий и озвучка работают на русском и английском; другие языки добавляем по запросу на раннем доступе.",
+          a: "На раннем доступе это русский и английский. Другие языки подключаем по запросу — озвучка и субтитры поддерживают их технически, но мы не заявляем язык готовым, пока сами не проверили его на реальных роликах.",
         },
         {
           q: "Кому принадлежит результат?",
@@ -474,7 +474,7 @@ export const content: Record<Lang, Dict> = {
       columns: [
         {
           title: "Pipeline core",
-          state: "Working in the engine",
+          state: "In closed testing",
           items: [
             "Idea → script → scenes",
             "Frame and prompt generation",
@@ -534,7 +534,7 @@ export const content: Record<Lang, Dict> = {
         },
         {
           q: "Which languages can the video speak?",
-          a: "Script and narration work in English and Russian; other languages are added on request during early access.",
+          a: "During early access it is English and Russian. Other languages are added on request — voice and subtitles support them technically, but we do not call a language ready until we have checked it on real videos.",
         },
         {
           q: "Who owns the result?",

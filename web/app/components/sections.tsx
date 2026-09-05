@@ -110,7 +110,7 @@ function StudioMock({ t, stage }: { t: Dict; stage: number }) {
           <span className="h-2.5 w-2.5 rounded-full bg-[#3a3742]" />
           <span className="h-2.5 w-2.5 rounded-full bg-[#3a3742]" />
           <span className="h-2.5 w-2.5 rounded-full bg-[#3a3742]" />
-          <span className="ml-2 text-[12px] text-muted-2">horsteppe.com</span>
+          <span className="ml-2 text-[12px] text-muted-2">horsteppe.vercel.app</span>
         </div>
 
         <div className="p-5 md:p-6">
