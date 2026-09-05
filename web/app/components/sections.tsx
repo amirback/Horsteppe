@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { Dict } from "../lib/content";
 import { CONTACT_EMAIL } from "../lib/content";
+import { Words } from "./motion";
 import {
   ArrowIcon,
   CheckIcon,
@@ -15,6 +16,8 @@ import {
   PlayIcon,
   Section,
 } from "./ui";
+import { GrowBar, Magnetic, Marquee, Reveal, Stagger, StaggerItem, motion } from "./motion";
+import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 
 export function mailtoHref(t: Dict) {
   const params = new URLSearchParams({ subject: t.waitlist.subject, body: t.waitlist.body });
@@ -26,23 +29,32 @@ export function mailtoHref(t: Dict) {
 export function Hero({ t }: { t: Dict }) {
   return (
     <div className="relative flex min-h-[100svh] flex-col items-center px-6 pb-24 pt-[17vh] text-center md:pt-[19.5vh]">
-      <h1 className="fade-up font-display text-balance font-bold leading-[1.02] tracking-[-0.035em] text-ink [font-size:clamp(33px,5.15vw,68px)]">
-        {t.hero.title}
+      <h1 className="font-display text-balance font-bold leading-[1.02] tracking-[-0.035em] text-ink [font-size:clamp(33px,5.15vw,68px)]">
+        <Words text={t.hero.title} delay={0.15} />
       </h1>
 
-      <p
-        className="fade-up mt-4 max-w-[44ch] text-[16.5px] leading-[1.45] text-ink-soft md:mt-5 md:text-[21px]"
-        style={{ animationDelay: "90ms" }}
+      <motion.p
+        className="mt-4 max-w-[44ch] text-[16.5px] leading-[1.45] text-ink-soft md:mt-5 md:text-[21px]"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.9, delay: 0.55, ease: [0.16, 1, 0.3, 1] }}
       >
         {t.hero.sub1}
         <br className="hidden sm:block" /> {t.hero.sub2}
-      </p>
+      </motion.p>
 
-      <div className="fade-up mt-11 md:mt-12" style={{ animationDelay: "180ms" }}>
-        <Pill as="a" href="#how" size="hero" className="text-ink hover:bg-ink hover:text-cream">
-          {t.hero.cta}
-        </Pill>
-      </div>
+      <motion.div
+        className="mt-11 md:mt-12"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.9, delay: 0.75, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <Magnetic strength={0.22}>
+          <Pill as="a" href="#how" size="hero" className="text-ink hover:bg-ink hover:text-cream">
+            {t.hero.cta}
+          </Pill>
+        </Magnetic>
+      </motion.div>
     </div>
   );
 }
@@ -52,8 +64,10 @@ export function Hero({ t }: { t: Dict }) {
 export function Problem({ t }: { t: Dict }) {
   return (
     <Section id="problem">
-      <Kicker>{t.problem.kicker}</Kicker>
-      <H2>{t.problem.title}</H2>
+      <Reveal>
+        <Kicker>{t.problem.kicker}</Kicker>
+        <H2>{t.problem.title}</H2>
+      </Reveal>
 
       <div className="mt-12 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
         <div className="rounded-3xl border border-ink/12 bg-white/45 p-7 md:p-9">
@@ -97,13 +111,15 @@ export function Problem({ t }: { t: Dict }) {
 export function How({ t }: { t: Dict }) {
   return (
     <Section id="how">
-      <Kicker>{t.how.kicker}</Kicker>
-      <H2>{t.how.title}</H2>
-      <Lead>{t.how.sub}</Lead>
+      <Reveal>
+        <Kicker>{t.how.kicker}</Kicker>
+        <H2>{t.how.title}</H2>
+        <Lead>{t.how.sub}</Lead>
+      </Reveal>
 
-      <ol className="mt-14 grid gap-px overflow-hidden rounded-3xl border border-ink/12 bg-ink/10 sm:grid-cols-2 lg:grid-cols-3">
+      <Stagger className="mt-14 grid gap-px overflow-hidden rounded-3xl border border-ink/12 bg-ink/10 sm:grid-cols-2 lg:grid-cols-3" gap={0.09}>
         {t.how.steps.map((step) => (
-          <li key={step.n} className="bg-paper p-7 transition-colors hover:bg-white/60">
+          <StaggerItem key={step.n} className="bg-paper p-7 transition-colors hover:bg-white/60" y={18}>
             <div className="flex items-baseline gap-3">
               <span className="font-display text-[12px] font-bold tracking-[0.12em] text-sage">
                 {step.n}
@@ -113,9 +129,9 @@ export function How({ t }: { t: Dict }) {
               </h3>
             </div>
             <p className="mt-3.5 text-[14.5px] leading-relaxed text-ink-soft/85">{step.text}</p>
-          </li>
+          </StaggerItem>
         ))}
-      </ol>
+      </Stagger>
     </Section>
   );
 }
@@ -129,11 +145,11 @@ export function Budget({ t }: { t: Dict }) {
   return (
     <Section id="engine">
       <div className="grid gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:gap-16">
-        <div>
+        <Reveal>
           <Kicker>{t.budget.kicker}</Kicker>
           <H2>{t.budget.title}</H2>
           <Lead>{t.budget.sub}</Lead>
-        </div>
+        </Reveal>
 
         <div className="rounded-3xl border border-ink/12 bg-white/45 p-7 md:p-9">
           <div className="nav-link text-ink-soft/60">{t.budget.exampleLabel}</div>
@@ -188,12 +204,10 @@ function Bar({ label, percent, tone }: { label: string; percent: number; tone: "
           {percent}%
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-ink/10">
-        <div
-          className={tone === "green" ? "h-full rounded-full bg-gradient-to-r from-sage to-forest" : "h-full rounded-full bg-ink/25"}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
+      <GrowBar
+        percent={percent}
+        className={tone === "green" ? "bg-gradient-to-r from-sage to-forest" : "bg-ink/25"}
+      />
     </div>
   );
 }
@@ -203,14 +217,16 @@ function Bar({ label, percent, tone }: { label: string; percent: number; tone: "
 export function Features({ t }: { t: Dict }) {
   return (
     <Section id="features">
-      <Kicker>{t.features.kicker}</Kicker>
-      <H2>{t.features.title}</H2>
+      <Reveal>
+        <Kicker>{t.features.kicker}</Kicker>
+        <H2>{t.features.title}</H2>
+      </Reveal>
 
-      <div className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      <Stagger className="mt-14 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
         {t.features.items.map((f, i) => (
-          <div
+          <StaggerItem
             key={f.title}
-            className="rounded-3xl border border-ink/12 bg-white/45 p-6 transition-colors hover:border-ink/25 hover:bg-white/70"
+            className="rounded-3xl border border-ink/12 bg-white/45 p-6 transition-all duration-300 hover:-translate-y-1 hover:border-ink/25 hover:bg-white/70 hover:shadow-[0_18px_50px_-28px_rgba(22,52,26,0.45)]"
           >
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-forest text-lime">
               <FeatureIcon d={FEATURE_ICONS[i % FEATURE_ICONS.length]} className="h-5 w-5" />
@@ -219,9 +235,20 @@ export function Features({ t }: { t: Dict }) {
               {f.title}
             </h3>
             <p className="mt-2.5 text-[14px] leading-relaxed text-ink-soft/85">{f.text}</p>
-          </div>
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
+
+      <Reveal delay={0.1} className="mt-14">
+        <Marquee className="rounded-full border border-ink/12 bg-white/40 py-4" speed={44}>
+          {t.features.items.map((f) => (
+            <span key={f.title} className="nav-link flex items-center gap-4 whitespace-nowrap text-ink-soft/70">
+              {f.title}
+              <span className="h-1.5 w-1.5 rounded-full bg-sage" />
+            </span>
+          ))}
+        </Marquee>
+      </Reveal>
     </Section>
   );
 }
@@ -231,13 +258,15 @@ export function Features({ t }: { t: Dict }) {
 export function Roadmap({ t }: { t: Dict }) {
   return (
     <Section id="roadmap">
-      <Kicker>{t.roadmap.kicker}</Kicker>
-      <H2>{t.roadmap.title}</H2>
-      <Lead>{t.roadmap.sub}</Lead>
+      <Reveal>
+        <Kicker>{t.roadmap.kicker}</Kicker>
+        <H2>{t.roadmap.title}</H2>
+        <Lead>{t.roadmap.sub}</Lead>
+      </Reveal>
 
-      <div className="mt-14 grid gap-5 md:grid-cols-3">
+      <Stagger className="mt-14 grid gap-5 md:grid-cols-3" gap={0.1}>
         {t.roadmap.columns.map((col, i) => (
-          <div
+          <StaggerItem
             key={col.title}
             className={[
               "rounded-3xl p-7",
@@ -267,9 +296,9 @@ export function Roadmap({ t }: { t: Dict }) {
                 </li>
               ))}
             </ul>
-          </div>
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
     </Section>
   );
 }
@@ -279,9 +308,11 @@ export function Roadmap({ t }: { t: Dict }) {
 export function Demo({ t }: { t: Dict }) {
   return (
     <Section id="demo">
-      <Kicker>{t.demo.kicker}</Kicker>
-      <H2>{t.demo.title}</H2>
-      <Lead>{t.demo.sub}</Lead>
+      <Reveal>
+        <Kicker>{t.demo.kicker}</Kicker>
+        <H2>{t.demo.title}</H2>
+        <Lead>{t.demo.sub}</Lead>
+      </Reveal>
 
       <div className="mt-12 overflow-hidden rounded-3xl border border-ink/12 bg-white/45">
         <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-moss via-sage to-lime">
@@ -303,13 +334,15 @@ export function Demo({ t }: { t: Dict }) {
 export function Team({ t }: { t: Dict }) {
   return (
     <Section id="team">
-      <Kicker>{t.team.kicker}</Kicker>
-      <H2>{t.team.title}</H2>
-      <Lead>{t.team.sub}</Lead>
+      <Reveal>
+        <Kicker>{t.team.kicker}</Kicker>
+        <H2>{t.team.title}</H2>
+        <Lead>{t.team.sub}</Lead>
+      </Reveal>
 
-      <div className="mt-14 grid gap-5 md:grid-cols-3">
+      <Stagger className="mt-14 grid gap-5 md:grid-cols-3" gap={0.1}>
         {t.team.roles.map((r) => (
-          <div key={r.role} className="rounded-3xl border border-ink/12 bg-white/45 p-7">
+          <StaggerItem key={r.role} className="rounded-3xl border border-ink/12 bg-white/45 p-7">
             <div className="nav-link text-sage">{r.role}</div>
             {r.who ? (
               <div className="font-display mt-3 text-[22px] font-bold tracking-[-0.02em] text-ink">
@@ -319,9 +352,9 @@ export function Team({ t }: { t: Dict }) {
             <p className={`text-[14.5px] leading-relaxed text-ink-soft/85 ${r.who ? "mt-3" : "mt-4"}`}>
               {r.text}
             </p>
-          </div>
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
 
       <p className="mt-8 inline-flex rounded-full border border-ink/15 px-4 py-2 text-[12.5px] text-ink-soft/75">
         {t.team.note}
@@ -335,13 +368,15 @@ export function Team({ t }: { t: Dict }) {
 export function Pricing({ t }: { t: Dict }) {
   return (
     <Section id="pricing">
-      <Kicker>{t.pricing.kicker}</Kicker>
-      <H2>{t.pricing.title}</H2>
-      <Lead>{t.pricing.sub}</Lead>
+      <Reveal>
+        <Kicker>{t.pricing.kicker}</Kicker>
+        <H2>{t.pricing.title}</H2>
+        <Lead>{t.pricing.sub}</Lead>
+      </Reveal>
 
-      <div className="mt-14 grid gap-5 md:grid-cols-3">
+      <Stagger className="mt-14 grid gap-5 md:grid-cols-3" gap={0.1}>
         {t.pricing.tiers.map((tier) => (
-          <div
+          <StaggerItem
             key={tier.name}
             className={[
               "flex flex-col rounded-3xl p-7 md:p-8",
@@ -388,11 +423,13 @@ export function Pricing({ t }: { t: Dict }) {
                 <ArrowIcon className="h-4 w-4" />
               </a>
             ) : null}
-          </div>
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
 
-      <p className="mt-8 max-w-3xl text-[13px] leading-relaxed text-ink-soft/65">{t.pricing.footnote}</p>
+      <Reveal>
+        <p className="mt-8 max-w-3xl text-[13px] leading-relaxed text-ink-soft/65">{t.pricing.footnote}</p>
+      </Reveal>
     </Section>
   );
 }
@@ -402,13 +439,15 @@ export function Pricing({ t }: { t: Dict }) {
 export function Blog({ t }: { t: Dict }) {
   return (
     <Section id="blog">
-      <Kicker>{t.blog.kicker}</Kicker>
-      <H2>{t.blog.title}</H2>
-      <Lead>{t.blog.sub}</Lead>
+      <Reveal>
+        <Kicker>{t.blog.kicker}</Kicker>
+        <H2>{t.blog.title}</H2>
+        <Lead>{t.blog.sub}</Lead>
+      </Reveal>
 
-      <div className="mt-12 divide-y divide-ink/10 border-y border-ink/10">
+      <Stagger className="mt-12 divide-y divide-ink/10 border-y border-ink/10" gap={0.08}>
         {t.blog.posts.map((post) => (
-          <article key={post.title} className="grid gap-3 py-7 md:grid-cols-[190px_1fr] md:gap-8">
+          <StaggerItem key={post.title} className="grid gap-3 py-7 md:grid-cols-[190px_1fr] md:gap-8">
             <div className="nav-link pt-1 text-ink-soft/55">{post.date}</div>
             <div>
               <h3 className="font-display text-[19px] font-bold tracking-[-0.015em] text-ink">
@@ -418,9 +457,9 @@ export function Blog({ t }: { t: Dict }) {
                 {post.text}
               </p>
             </div>
-          </article>
+          </StaggerItem>
         ))}
-      </div>
+      </Stagger>
     </Section>
   );
 }
@@ -432,8 +471,10 @@ export function Faq({ t }: { t: Dict }) {
 
   return (
     <Section id="faq">
-      <Kicker>{t.faq.kicker}</Kicker>
-      <H2>{t.faq.title}</H2>
+      <Reveal>
+        <Kicker>{t.faq.kicker}</Kicker>
+        <H2>{t.faq.title}</H2>
+      </Reveal>
 
       <div className="mt-12 max-w-3xl divide-y divide-ink/10 border-y border-ink/10">
         {t.faq.items.map((item, i) => {
@@ -493,10 +534,12 @@ export function Cta({ t }: { t: Dict }) {
           {t.cta.sub}
         </p>
         <div className="relative mt-10">
-          <Pill as="a" href={mailtoHref(t)} size="lg" className="text-cream hover:bg-cream hover:text-forest">
-            {t.cta.button}
-            <ArrowIcon className="h-4 w-4" />
-          </Pill>
+          <Magnetic strength={0.22}>
+            <Pill as="a" href={mailtoHref(t)} size="lg" className="text-cream hover:bg-cream hover:text-forest">
+              {t.cta.button}
+              <ArrowIcon className="h-4 w-4" />
+            </Pill>
+          </Magnetic>
           <p className="mt-4 text-[13px] text-cream/60">{t.cta.alt}</p>
         </div>
       </div>
@@ -506,15 +549,7 @@ export function Cta({ t }: { t: Dict }) {
 
 /* -------------------------------------------------------------- ПОДВАЛ -- */
 
-export function Footer({
-  t,
-  lang,
-  setLang,
-}: {
-  t: Dict;
-  lang: "en" | "ru";
-  setLang: (l: "en" | "ru") => void;
-}) {
+export function Footer({ t, lang }: { t: Dict; lang: Lang }) {
   return (
     <footer className="border-t border-ink/10 py-12">
       <div className="container-x">
@@ -535,19 +570,27 @@ export function Footer({
             <div>
               <div className="nav-link text-ink-soft/55">{t.footer.lang}</div>
               <div className="mt-2.5 inline-flex rounded-full border border-ink/15 p-0.5">
-                {(["en", "ru"] as const).map((l) => (
-                  <button
+                {LOCALES.map((l) => (
+                  <a
                     key={l}
-                    type="button"
-                    onClick={() => setLang(l)}
-                    aria-pressed={lang === l}
+                    href={`/${l}`}
+                    hrefLang={LOCALE_META[l].htmlLang}
+                    onClick={() => {
+                      try {
+                        document.cookie = `horsteppe-lang=${l}; path=/; max-age=31536000; samesite=lax`;
+                      } catch {
+                        /* cookie отключены */
+                      }
+                    }}
+                    aria-current={lang === l ? "true" : undefined}
+                    title={LOCALE_META[l].native}
                     className={[
                       "nav-link rounded-full px-3.5 py-1.5 transition",
                       lang === l ? "bg-ink text-cream" : "text-ink-soft/60 hover:text-ink",
                     ].join(" ")}
                   >
-                    {l}
-                  </button>
+                    {LOCALE_META[l].label}
+                  </a>
                 ))}
               </div>
             </div>

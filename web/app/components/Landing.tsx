@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { content, type Lang } from "../lib/content";
+import { content } from "../lib/content";
+import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 import { Mesh } from "./Mesh";
 import { Logo, Pill, SearchIcon } from "./ui";
+import { Magnetic, ScrollProgress, motion } from "./motion";
 import {
   Blog,
   Budget,
@@ -20,10 +22,16 @@ import {
   Team,
 } from "./sections";
 
-const LANG_KEY = "horsteppe-lang";
+/** Запоминаем выбор языка, чтобы middleware не переспрашивал браузер. */
+export function rememberLang(lang: Lang) {
+  try {
+    document.cookie = `horsteppe-lang=${lang}; path=/; max-age=31536000; samesite=lax`;
+  } catch {
+    /* cookie отключены — язык просто не запомнится */
+  }
+}
 
-export default function Landing() {
-  const [lang, setLang] = useState<Lang>("en");
+export default function Landing({ lang }: { lang: Lang }) {
   const [pastHero, setPastHero] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -31,25 +39,7 @@ export default function Landing() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(LANG_KEY);
-      if (saved === "ru" || saved === "en") setLang(saved);
-    } catch {
-      /* приватный режим — остаётся язык по умолчанию */
-    }
-  }, []);
-
-  useEffect(() => {
-    document.documentElement.lang = lang;
-    try {
-      window.localStorage.setItem(LANG_KEY, lang);
-    } catch {
-      /* не критично */
-    }
-  }, [lang]);
-
-  useEffect(() => {
-    const onScroll = () => setPastHero(window.scrollY > window.innerHeight - 90);
+    const onScroll = () => setPastHero(window.scrollY > window.innerHeight - 110);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
@@ -69,7 +59,6 @@ export default function Landing() {
     { href: "#blog", label: t.nav.blog },
   ];
 
-  /** Поиск по разделам страницы: заголовок + ключевые слова секции. */
   const index = useMemo(
     () => [
       { href: "#how", title: t.how.title, body: t.how.steps.map((s) => `${s.title} ${s.text}`).join(" ") },
@@ -96,7 +85,7 @@ export default function Landing() {
     setQuery("");
   };
 
-  const navInner = (dark: boolean) => (
+  const navInner = (
     <div className="container-x flex h-24 items-center justify-between gap-6 md:h-28">
       <a href="#top" aria-label="Horsteppe" className="shrink-0">
         <Logo />
@@ -104,7 +93,11 @@ export default function Landing() {
 
       <div className="hidden items-center gap-9 lg:flex xl:gap-12">
         {links.map((l) => (
-          <a key={l.label} href={l.href} className="nav-link text-ink transition hover:opacity-60">
+          <a
+            key={l.label}
+            href={l.href}
+            className="nav-link relative text-ink transition-opacity hover:opacity-60"
+          >
             {l.label}
           </a>
         ))}
@@ -141,18 +134,25 @@ export default function Landing() {
               </button>
             </div>
           ) : (
-            <Pill
-              as="button"
-              onClick={() => setSearchOpen(true)}
-              className="hidden w-[200px] justify-start gap-3 pl-6 text-ink hover:bg-ink hover:text-cream sm:inline-flex"
-            >
-              <SearchIcon className="h-4 w-4" />
-              {t.nav.search}
-            </Pill>
+            <Magnetic strength={0.18}>
+              <Pill
+                as="button"
+                onClick={() => setSearchOpen(true)}
+                className="hidden w-[200px] justify-start gap-3 pl-6 text-ink hover:bg-ink hover:text-cream sm:inline-flex"
+              >
+                <SearchIcon className="h-4 w-4" />
+                {t.nav.search}
+              </Pill>
+            </Magnetic>
           )}
 
           {searchOpen && query.trim().length >= 2 ? (
-            <div className="absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-3rem))] overflow-hidden rounded-2xl border border-ink/15 bg-paper shadow-xl">
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="absolute right-0 top-full z-50 mt-2 w-[min(22rem,calc(100vw-3rem))] overflow-hidden rounded-2xl border border-ink/15 bg-paper shadow-xl"
+            >
               {results.length ? (
                 results.map((r) => (
                   <a
@@ -167,7 +167,7 @@ export default function Landing() {
               ) : (
                 <div className="px-4 py-3 text-[13.5px] text-ink-soft/60">{t.searchUi.empty}</div>
               )}
-            </div>
+            </motion.div>
           ) : null}
         </div>
 
@@ -192,7 +192,12 @@ export default function Landing() {
   );
 
   const mobileMenu = (
-    <div className="container-x pb-5 lg:hidden">
+    <motion.div
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: "auto" }}
+      exit={{ opacity: 0, height: 0 }}
+      className="container-x overflow-hidden pb-5 lg:hidden"
+    >
       <div className="flex flex-col gap-1 border-t border-ink/15 pt-4">
         {links.map((l) => (
           <a
@@ -204,17 +209,34 @@ export default function Landing() {
             {l.label}
           </a>
         ))}
+        <div className="mt-3 flex gap-2 border-t border-ink/15 pt-4">
+          {LOCALES.map((l) => (
+            <a
+              key={l}
+              href={`/${l}`}
+              onClick={() => rememberLang(l)}
+              className={[
+                "nav-link rounded-full px-4 py-2 transition",
+                l === lang ? "bg-ink text-cream" : "border border-ink/20 text-ink-soft/70",
+              ].join(" ")}
+            >
+              {LOCALE_META[l].label}
+            </a>
+          ))}
+        </div>
       </div>
-    </div>
+    </motion.div>
   );
 
   return (
     <>
+      <ScrollProgress />
+
       {/* Экран-обложка: навигация лежит поверх зелёного фона, как в макете */}
       <header id="top" className="relative isolate">
         <Mesh />
         <nav className="relative z-20">
-          {navInner(true)}
+          {navInner}
           {menuOpen ? mobileMenu : null}
         </nav>
         <div className="relative z-10">
@@ -223,15 +245,15 @@ export default function Landing() {
       </header>
 
       {/* Липкая навигация появляется только после обложки, чтобы не спорить с макетом */}
-      <nav
-        className={[
-          "fixed inset-x-0 top-0 z-50 border-b border-ink/10 bg-paper/90 backdrop-blur-xl transition-transform duration-300",
-          pastHero ? "translate-y-0" : "-translate-y-full",
-        ].join(" ")}
+      <motion.nav
+        initial={false}
+        animate={{ y: pastHero ? 0 : "-100%" }}
+        transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+        className="fixed inset-x-0 top-0 z-50 border-b border-ink/10 bg-paper/90 backdrop-blur-xl"
       >
-        {navInner(false)}
+        {navInner}
         {menuOpen && pastHero ? mobileMenu : null}
-      </nav>
+      </motion.nav>
 
       <main>
         <Problem t={t} />
@@ -247,7 +269,7 @@ export default function Landing() {
         <Cta t={t} />
       </main>
 
-      <Footer t={t} lang={lang} setLang={setLang} />
+      <Footer t={t} lang={lang} />
     </>
   );
 }
