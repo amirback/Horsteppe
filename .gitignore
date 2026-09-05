@@ -26,9 +26,12 @@ next-env.d.ts
 .vercel
 
 # --- сгенерированные медиа (тяжёлые, не место в git) ---
-output/
-projects/
-tmp/
+# Пути привязаны к корню: без ведущего слэша правило "projects/" вырезало
+# studio/app/projects/ — страницы приложения, а не сгенерированные файлы.
+/output/
+/tmp/
+worker/tmp/
+worker/output/
 *.mp4
 *.mov
 *.mp3
