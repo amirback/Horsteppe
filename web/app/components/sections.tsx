@@ -1,204 +1,53 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Dict } from "../lib/content";
 import { CONTACT_EMAIL } from "../lib/content";
 import {
   ArrowIcon,
   CheckIcon,
-  DotIcon,
   FEATURE_ICONS,
   FeatureIcon,
   H2,
   Kicker,
   Lead,
+  Pill,
   PlayIcon,
   Section,
 } from "./ui";
 
 export function mailtoHref(t: Dict) {
-  const params = new URLSearchParams({
-    subject: t.waitlist.subject,
-    body: t.waitlist.body,
-  });
+  const params = new URLSearchParams({ subject: t.waitlist.subject, body: t.waitlist.body });
   return `mailto:${CONTACT_EMAIL}?${params.toString()}`;
 }
 
-/* ---------------------------------------------------------------- HERO -- */
+/* ---------------------------------------------------------------- ГЕРОЙ -- */
 
 export function Hero({ t }: { t: Dict }) {
-  const [stage, setStage] = useState(0);
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setStage((s) => (s + 1) % (t.hero.stages.length + 1));
-    }, 1400);
-    return () => window.clearInterval(id);
-  }, [t.hero.stages.length]);
-
   return (
-    <header className="relative overflow-hidden pt-28 pb-16 md:pt-36 md:pb-24">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-10"
+    <div className="relative flex min-h-[100svh] flex-col items-center px-6 pb-24 pt-[17vh] text-center md:pt-[19.5vh]">
+      <h1 className="fade-up font-display text-balance font-bold leading-[1.02] tracking-[-0.035em] text-ink [font-size:clamp(33px,5.15vw,68px)]">
+        {t.hero.title}
+      </h1>
+
+      <p
+        className="fade-up mt-4 max-w-[44ch] text-[16.5px] leading-[1.45] text-ink-soft md:mt-5 md:text-[21px]"
+        style={{ animationDelay: "90ms" }}
       >
-        <div className="drift absolute -top-40 left-1/2 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-[radial-gradient(ellipse_at_center,rgba(233,161,59,0.16),transparent_65%)]" />
-        <div className="absolute -bottom-32 -left-24 h-[420px] w-[520px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(108,123,217,0.12),transparent_68%)]" />
-        <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-line to-transparent" />
-      </div>
+        {t.hero.sub1}
+        <br className="hidden sm:block" /> {t.hero.sub2}
+      </p>
 
-      <div className="container-x">
-        <div className="grid items-center gap-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-16">
-          <div className="fade-up">
-            <span className="inline-flex items-center gap-2 rounded-full border border-line bg-surface/70 px-3.5 py-1.5 text-[12.5px] text-muted">
-              <span className="relative flex h-1.5 w-1.5">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber opacity-70" />
-                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-amber" />
-              </span>
-              {t.hero.badge}
-            </span>
-
-            <h1 className="mt-6 text-balance text-[40px] font-semibold leading-[1.05] tracking-[-0.032em] text-cream sm:text-[52px] lg:text-[60px]">
-              {t.hero.title}
-              <br />
-              <span className="bg-gradient-to-r from-amber-soft via-amber to-ember bg-clip-text text-transparent">
-                {t.hero.titleAccent}
-              </span>
-            </h1>
-
-            <p className="mt-6 max-w-xl text-[16.5px] leading-relaxed text-muted md:text-[17.5px]">
-              {t.hero.sub}
-            </p>
-
-            <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <a
-                href={mailtoHref(t)}
-                className="glow-amber inline-flex items-center justify-center gap-2 rounded-xl bg-amber px-6 py-3.5 text-[15px] font-semibold text-[#1a1206] transition hover:bg-amber-soft"
-              >
-                {t.hero.ctaPrimary}
-                <ArrowIcon className="h-4 w-4" />
-              </a>
-              <a
-                href="#how"
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface/60 px-6 py-3.5 text-[15px] font-medium text-cream transition hover:border-muted-2 hover:bg-surface"
-              >
-                {t.hero.ctaSecondary}
-              </a>
-            </div>
-
-            <p className="mt-5 text-[13.5px] text-muted-2">{t.hero.note}</p>
-          </div>
-
-          <div className="fade-up" style={{ animationDelay: "120ms" }}>
-            <StudioMock t={t} stage={stage} />
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function StudioMock({ t, stage }: { t: Dict; stage: number }) {
-  const done = stage;
-  const total = t.hero.stages.length;
-  const isComplete = done >= total;
-
-  return (
-    <div className="relative">
-      <div className="grain relative overflow-hidden rounded-2xl border border-line bg-surface/90 shadow-[0_40px_120px_-40px_rgba(0,0,0,0.9)]">
-        <div className="flex items-center gap-2 border-b border-line-soft px-4 py-3">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#3a3742]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#3a3742]" />
-          <span className="h-2.5 w-2.5 rounded-full bg-[#3a3742]" />
-          <span className="ml-2 text-[12px] text-muted-2">horsteppe.vercel.app</span>
-        </div>
-
-        <div className="p-5 md:p-6">
-          <div className="rounded-xl border border-line bg-ink-2 px-4 py-3.5 text-[14px] text-muted">
-            {t.hero.promptPlaceholder}
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-2.5">
-            {(
-              [
-                ["style", t.hero.fields.style, t.hero.fieldValues.style],
-                ["duration", t.hero.fields.duration, t.hero.fieldValues.duration],
-                ["language", t.hero.fields.language, t.hero.fieldValues.language],
-                ["format", t.hero.fields.format, t.hero.fieldValues.format],
-              ] as const
-            ).map(([key, label, value]) => (
-              <div
-                key={key}
-                className="rounded-lg border border-line bg-ink-2/70 px-3 py-2.5"
-              >
-                <div className="text-[10.5px] uppercase tracking-[0.12em] text-muted-2">
-                  {label}
-                </div>
-                <div className="mt-1 text-[13.5px] text-cream">{value}</div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-3.5 rounded-xl bg-amber px-4 py-3 text-center text-[14px] font-semibold text-[#1a1206]">
-            {t.hero.generate}
-          </div>
-
-          <div className="mt-5 space-y-2.5 border-t border-line-soft pt-5">
-            {t.hero.stages.map((s, i) => {
-              const state =
-                i < done ? "done" : i === done && !isComplete ? "active" : "idle";
-              return (
-                <div key={s} className="flex items-center gap-3">
-                  <span
-                    className={[
-                      "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors duration-500",
-                      state === "done"
-                        ? "border-amber/60 bg-amber/15 text-amber"
-                        : state === "active"
-                          ? "border-amber bg-amber/10 text-amber"
-                          : "border-line text-muted-2",
-                    ].join(" ")}
-                  >
-                    {state === "done" ? (
-                      <CheckIcon className="h-3.5 w-3.5" />
-                    ) : (
-                      <DotIcon
-                        className={`h-3 w-3 ${state === "active" ? "animate-pulse" : "opacity-40"}`}
-                      />
-                    )}
-                  </span>
-                  <span
-                    className={[
-                      "text-[13.5px] transition-colors duration-500",
-                      state === "idle" ? "text-muted-2" : "text-cream",
-                    ].join(" ")}
-                  >
-                    {s}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="mt-5 overflow-hidden rounded-xl border border-line bg-ink-2">
-            <div
-              className={[
-                "flex aspect-video items-center justify-center transition-opacity duration-700",
-                isComplete ? "opacity-100" : "opacity-40",
-              ].join(" ")}
-            >
-              <span className="flex h-12 w-12 items-center justify-center rounded-full border border-amber/40 bg-amber/10 text-amber">
-                <PlayIcon className="h-6 w-6" />
-              </span>
-            </div>
-          </div>
-        </div>
+      <div className="fade-up mt-11 md:mt-12" style={{ animationDelay: "180ms" }}>
+        <Pill as="a" href="#how" size="hero" className="text-ink hover:bg-ink hover:text-cream">
+          {t.hero.cta}
+        </Pill>
       </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------- PROBLEM -- */
+/* ------------------------------------------------------------- ПРОБЛЕМА -- */
 
 export function Problem({ t }: { t: Dict }) {
   return (
@@ -207,42 +56,34 @@ export function Problem({ t }: { t: Dict }) {
       <H2>{t.problem.title}</H2>
 
       <div className="mt-12 grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
-        <div className="rounded-2xl border border-line bg-surface/40 p-6 md:p-8">
-          <h3 className="text-[15px] font-semibold text-muted">
-            {t.problem.beforeTitle}
-          </h3>
+        <div className="rounded-3xl border border-ink/12 bg-white/45 p-7 md:p-9">
+          <h3 className="nav-link text-ink-soft/70">{t.problem.beforeTitle}</h3>
           <ul className="mt-6 grid gap-x-8 gap-y-3.5 sm:grid-cols-2">
             {t.problem.beforeItems.map((item, i) => (
               <li key={item} className="flex items-start gap-3">
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border border-line text-[11px] text-muted-2">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-ink/20 text-[10.5px] text-ink-soft/60">
                   {i + 1}
                 </span>
-                <span className="text-[14.5px] leading-snug text-muted">
-                  {item}
-                </span>
+                <span className="text-[14.5px] leading-snug text-ink-soft/85">{item}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-7 border-t border-line-soft pt-5 text-[14px] leading-relaxed text-muted-2">
+          <p className="mt-7 border-t border-ink/10 pt-5 text-[14px] leading-relaxed text-ink-soft/70">
             {t.problem.beforeFooter}
           </p>
         </div>
 
-        <div className="relative overflow-hidden rounded-2xl border border-amber/25 bg-gradient-to-b from-amber/[0.07] to-transparent p-6 md:p-8">
-          <h3 className="text-[15px] font-semibold text-amber">
-            {t.problem.afterTitle}
-          </h3>
+        <div className="relative overflow-hidden rounded-3xl bg-forest p-7 text-cream md:p-9">
+          <h3 className="nav-link text-lime">{t.problem.afterTitle}</h3>
           <ul className="mt-6 space-y-4">
             {t.problem.afterItems.map((item) => (
               <li key={item} className="flex items-start gap-3">
-                <CheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber" />
-                <span className="text-[16px] font-medium leading-snug text-cream">
-                  {item}
-                </span>
+                <CheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-lime" />
+                <span className="text-[16.5px] font-medium leading-snug">{item}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-7 border-t border-amber/15 pt-5 text-[14px] leading-relaxed text-muted">
+          <p className="mt-7 border-t border-cream/15 pt-5 text-[14px] leading-relaxed text-cream/75">
             {t.problem.afterFooter}
           </p>
         </div>
@@ -251,29 +92,27 @@ export function Problem({ t }: { t: Dict }) {
   );
 }
 
-/* ----------------------------------------------------------------- HOW -- */
+/* ----------------------------------------------------------------- КАК -- */
 
 export function How({ t }: { t: Dict }) {
   return (
-    <Section id="how" className="border-t border-line-soft">
+    <Section id="how">
       <Kicker>{t.how.kicker}</Kicker>
       <H2>{t.how.title}</H2>
       <Lead>{t.how.sub}</Lead>
 
-      <ol className="mt-14 grid gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-2 lg:grid-cols-3">
+      <ol className="mt-14 grid gap-px overflow-hidden rounded-3xl border border-ink/12 bg-ink/10 sm:grid-cols-2 lg:grid-cols-3">
         {t.how.steps.map((step) => (
-          <li key={step.n} className="group bg-ink p-7 transition-colors hover:bg-surface/50">
+          <li key={step.n} className="bg-paper p-7 transition-colors hover:bg-white/60">
             <div className="flex items-baseline gap-3">
-              <span className="text-[12px] font-semibold tracking-[0.14em] text-amber">
+              <span className="font-display text-[12px] font-bold tracking-[0.12em] text-sage">
                 {step.n}
               </span>
-              <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-cream">
+              <h3 className="font-display text-[17px] font-bold tracking-[-0.01em] text-ink">
                 {step.title}
               </h3>
             </div>
-            <p className="mt-3.5 text-[14.5px] leading-relaxed text-muted">
-              {step.text}
-            </p>
+            <p className="mt-3.5 text-[14.5px] leading-relaxed text-ink-soft/85">{step.text}</p>
           </li>
         ))}
       </ol>
@@ -281,14 +120,14 @@ export function How({ t }: { t: Dict }) {
   );
 }
 
-/* -------------------------------------------------------------- BUDGET -- */
+/* -------------------------------------------------------------- БЮДЖЕТ -- */
 
 export function Budget({ t }: { t: Dict }) {
-  const premiumCount = t.budget.scenes.filter((s) => s.kind === "premium").length;
-  const smartShare = Math.round((premiumCount / t.budget.scenes.length) * 100);
+  const premium = t.budget.scenes.filter((s) => s.kind === "premium").length;
+  const smartShare = Math.round((premium / t.budget.scenes.length) * 100);
 
   return (
-    <Section id="engine" className="border-t border-line-soft">
+    <Section id="engine">
       <div className="grid gap-14 lg:grid-cols-[0.9fr_1.1fr] lg:gap-16">
         <div>
           <Kicker>{t.budget.kicker}</Kicker>
@@ -296,89 +135,62 @@ export function Budget({ t }: { t: Dict }) {
           <Lead>{t.budget.sub}</Lead>
         </div>
 
-        <div className="rounded-2xl border border-line bg-surface/40 p-6 md:p-8">
-          <div className="text-[12.5px] uppercase tracking-[0.13em] text-muted-2">
-            {t.budget.exampleLabel}
-          </div>
+        <div className="rounded-3xl border border-ink/12 bg-white/45 p-7 md:p-9">
+          <div className="nav-link text-ink-soft/60">{t.budget.exampleLabel}</div>
 
-          <div className="mt-6 grid grid-cols-5 gap-2">
+          <div className="mt-6 grid grid-cols-5 gap-2.5">
             {t.budget.scenes.map((s) => (
               <div key={s.n} className="text-center">
                 <div
                   className={[
-                    "flex h-20 items-end justify-center rounded-lg border p-2 md:h-24",
+                    "flex h-20 items-end justify-center rounded-xl p-2 md:h-24",
                     s.kind === "premium"
-                      ? "border-amber/45 bg-gradient-to-b from-amber/25 to-amber/5"
-                      : "border-line bg-ink-2",
+                      ? "bg-gradient-to-b from-sage to-forest text-cream"
+                      : "border border-ink/15 bg-white/70 text-ink-soft/50",
                   ].join(" ")}
                 >
-                  <span
-                    className={[
-                      "text-[11px] font-semibold",
-                      s.kind === "premium" ? "text-amber" : "text-muted-2",
-                    ].join(" ")}
-                  >
-                    {s.n}
-                  </span>
+                  <span className="text-[11px] font-semibold">{s.n}</span>
                 </div>
-                <div className="mt-2 text-[10.5px] leading-tight text-muted-2">
-                  {s.label}
-                </div>
+                <div className="mt-2 text-[10.5px] leading-tight text-ink-soft/60">{s.label}</div>
               </div>
             ))}
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px]">
-            <span className="inline-flex items-center gap-2 text-muted">
-              <span className="h-2.5 w-2.5 rounded-sm border border-amber/45 bg-amber/25" />
+          <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] text-ink-soft/75">
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-sm bg-forest" />
               {t.budget.premium}
             </span>
-            <span className="inline-flex items-center gap-2 text-muted">
-              <span className="h-2.5 w-2.5 rounded-sm border border-line bg-ink-2" />
+            <span className="inline-flex items-center gap-2">
+              <span className="h-2.5 w-2.5 rounded-sm border border-ink/20 bg-white" />
               {t.budget.motion}
             </span>
           </div>
 
-          <div className="mt-8 space-y-4 border-t border-line-soft pt-7">
+          <div className="mt-8 space-y-4 border-t border-ink/10 pt-7">
             <Bar label={t.budget.barNaiveLabel} percent={100} tone="dim" />
-            <Bar label={t.budget.barSmartLabel} percent={smartShare} tone="amber" />
+            <Bar label={t.budget.barSmartLabel} percent={smartShare} tone="green" />
           </div>
 
-          <p className="mt-7 text-[12.5px] leading-relaxed text-muted-2">
-            {t.budget.footnote}
-          </p>
+          <p className="mt-7 text-[12.5px] leading-relaxed text-ink-soft/60">{t.budget.footnote}</p>
         </div>
       </div>
     </Section>
   );
 }
 
-function Bar({
-  label,
-  percent,
-  tone,
-}: {
-  label: string;
-  percent: number;
-  tone: "amber" | "dim";
-}) {
+function Bar({ label, percent, tone }: { label: string; percent: number; tone: "green" | "dim" }) {
   return (
     <div>
       <div className="mb-2 flex items-baseline justify-between gap-4">
-        <span className="text-[13px] text-muted">{label}</span>
-        <span
-          className={`text-[13px] font-semibold ${tone === "amber" ? "text-amber" : "text-muted-2"}`}
-        >
+        <span className="text-[13px] text-ink-soft/85">{label}</span>
+        <span className={`text-[13px] font-semibold ${tone === "green" ? "text-sage" : "text-ink-soft/50"}`}>
           {percent}%
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-ink-2">
+      <div className="h-2 overflow-hidden rounded-full bg-ink/10">
         <div
-          className={
-            tone === "amber"
-              ? "h-full rounded-full bg-gradient-to-r from-amber to-ember"
-              : "h-full rounded-full bg-[#33303c]"
-          }
+          className={tone === "green" ? "h-full rounded-full bg-gradient-to-r from-sage to-forest" : "h-full rounded-full bg-ink/25"}
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -386,11 +198,11 @@ function Bar({
   );
 }
 
-/* ------------------------------------------------------------ FEATURES -- */
+/* ---------------------------------------------------------- ВОЗМОЖНОСТИ -- */
 
 export function Features({ t }: { t: Dict }) {
   return (
-    <Section id="features" className="border-t border-line-soft">
+    <Section id="features">
       <Kicker>{t.features.kicker}</Kicker>
       <H2>{t.features.title}</H2>
 
@@ -398,20 +210,15 @@ export function Features({ t }: { t: Dict }) {
         {t.features.items.map((f, i) => (
           <div
             key={f.title}
-            className="rounded-2xl border border-line bg-surface/35 p-6 transition-colors hover:border-muted-2/60 hover:bg-surface/60"
+            className="rounded-3xl border border-ink/12 bg-white/45 p-6 transition-colors hover:border-ink/25 hover:bg-white/70"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-amber/25 bg-amber/10 text-amber">
-              <FeatureIcon
-                d={FEATURE_ICONS[i % FEATURE_ICONS.length]}
-                className="h-5 w-5"
-              />
+            <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-forest text-lime">
+              <FeatureIcon d={FEATURE_ICONS[i % FEATURE_ICONS.length]} className="h-5 w-5" />
             </span>
-            <h3 className="mt-5 text-[15.5px] font-semibold tracking-[-0.01em] text-cream">
+            <h3 className="font-display mt-5 text-[15.5px] font-bold tracking-[-0.01em] text-ink">
               {f.title}
             </h3>
-            <p className="mt-2.5 text-[14px] leading-relaxed text-muted">
-              {f.text}
-            </p>
+            <p className="mt-2.5 text-[14px] leading-relaxed text-ink-soft/85">{f.text}</p>
           </div>
         ))}
       </div>
@@ -419,11 +226,11 @@ export function Features({ t }: { t: Dict }) {
   );
 }
 
-/* ------------------------------------------------------------- ROADMAP -- */
+/* --------------------------------------------------------- ДОРОЖНАЯ КАРТА */
 
 export function Roadmap({ t }: { t: Dict }) {
   return (
-    <Section id="roadmap" className="border-t border-line-soft">
+    <Section id="roadmap">
       <Kicker>{t.roadmap.kicker}</Kicker>
       <H2>{t.roadmap.title}</H2>
       <Lead>{t.roadmap.sub}</Lead>
@@ -433,20 +240,18 @@ export function Roadmap({ t }: { t: Dict }) {
           <div
             key={col.title}
             className={[
-              "rounded-2xl border p-6 md:p-7",
-              i === 0
-                ? "border-amber/25 bg-gradient-to-b from-amber/[0.06] to-transparent"
-                : "border-line bg-surface/35",
+              "rounded-3xl p-7",
+              i === 0 ? "bg-forest text-cream" : "border border-ink/12 bg-white/45",
             ].join(" ")}
           >
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-[16px] font-semibold text-cream">{col.title}</h3>
+              <h3 className={`font-display text-[16px] font-bold ${i === 0 ? "text-cream" : "text-ink"}`}>
+                {col.title}
+              </h3>
               <span
                 className={[
-                  "shrink-0 rounded-full border px-2.5 py-1 text-[11px]",
-                  i === 0
-                    ? "border-amber/35 bg-amber/10 text-amber"
-                    : "border-line bg-ink-2 text-muted-2",
+                  "shrink-0 rounded-full px-3 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em]",
+                  i === 0 ? "bg-lime/20 text-lime" : "bg-ink/8 text-ink-soft/70",
                 ].join(" ")}
               >
                 {col.state}
@@ -455,13 +260,10 @@ export function Roadmap({ t }: { t: Dict }) {
             <ul className="mt-5 space-y-3">
               {col.items.map((item) => (
                 <li key={item} className="flex items-start gap-2.5">
-                  <span
-                    className={[
-                      "mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full",
-                      i === 0 ? "bg-amber" : "bg-muted-2",
-                    ].join(" ")}
-                  />
-                  <span className="text-[14px] leading-snug text-muted">{item}</span>
+                  <span className={`mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full ${i === 0 ? "bg-lime" : "bg-sage"}`} />
+                  <span className={`text-[14px] leading-snug ${i === 0 ? "text-cream/85" : "text-ink-soft/85"}`}>
+                    {item}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -472,29 +274,152 @@ export function Roadmap({ t }: { t: Dict }) {
   );
 }
 
-/* ---------------------------------------------------------------- DEMO -- */
+/* ---------------------------------------------------------------- ДЕМО -- */
 
 export function Demo({ t }: { t: Dict }) {
   return (
-    <Section id="demo" className="border-t border-line-soft">
+    <Section id="demo">
       <Kicker>{t.demo.kicker}</Kicker>
       <H2>{t.demo.title}</H2>
       <Lead>{t.demo.sub}</Lead>
 
-      <div className="mt-12 overflow-hidden rounded-2xl border border-line bg-surface/40">
-        <div className="grain relative flex aspect-video items-center justify-center bg-[radial-gradient(ellipse_at_center,rgba(233,161,59,0.08),transparent_60%)]">
+      <div className="mt-12 overflow-hidden rounded-3xl border border-ink/12 bg-white/45">
+        <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-moss via-sage to-lime">
           <div className="text-center">
-            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-amber/35 bg-amber/10 text-amber">
+            <span className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-[1.5px] border-cream/70 text-cream">
               <PlayIcon className="h-7 w-7" />
             </span>
-            <p className="mt-5 text-[15px] font-medium text-cream">
-              {t.demo.placeholder}
-            </p>
+            <p className="mt-5 text-[15px] font-medium text-cream">{t.demo.placeholder}</p>
           </div>
         </div>
-        <p className="border-t border-line-soft px-6 py-4 text-[13.5px] text-muted-2">
-          {t.demo.caption}
-        </p>
+        <p className="px-7 py-5 text-[13.5px] text-ink-soft/70">{t.demo.caption}</p>
+      </div>
+    </Section>
+  );
+}
+
+/* -------------------------------------------------------------- КОМАНДА -- */
+
+export function Team({ t }: { t: Dict }) {
+  return (
+    <Section id="team">
+      <Kicker>{t.team.kicker}</Kicker>
+      <H2>{t.team.title}</H2>
+      <Lead>{t.team.sub}</Lead>
+
+      <div className="mt-14 grid gap-5 md:grid-cols-3">
+        {t.team.roles.map((r) => (
+          <div key={r.role} className="rounded-3xl border border-ink/12 bg-white/45 p-7">
+            <div className="nav-link text-sage">{r.role}</div>
+            {r.who ? (
+              <div className="font-display mt-3 text-[22px] font-bold tracking-[-0.02em] text-ink">
+                {r.who}
+              </div>
+            ) : null}
+            <p className={`text-[14.5px] leading-relaxed text-ink-soft/85 ${r.who ? "mt-3" : "mt-4"}`}>
+              {r.text}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-8 inline-flex rounded-full border border-ink/15 px-4 py-2 text-[12.5px] text-ink-soft/75">
+        {t.team.note}
+      </p>
+    </Section>
+  );
+}
+
+/* --------------------------------------------------------------- ТАРИФЫ -- */
+
+export function Pricing({ t }: { t: Dict }) {
+  return (
+    <Section id="pricing">
+      <Kicker>{t.pricing.kicker}</Kicker>
+      <H2>{t.pricing.title}</H2>
+      <Lead>{t.pricing.sub}</Lead>
+
+      <div className="mt-14 grid gap-5 md:grid-cols-3">
+        {t.pricing.tiers.map((tier) => (
+          <div
+            key={tier.name}
+            className={[
+              "flex flex-col rounded-3xl p-7 md:p-8",
+              tier.highlight ? "bg-forest text-cream" : "border border-ink/12 bg-white/45",
+            ].join(" ")}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className={`font-display text-[18px] font-bold ${tier.highlight ? "text-cream" : "text-ink"}`}>
+                {tier.name}
+              </h3>
+              <span
+                className={[
+                  "rounded-full px-3 py-1 text-[10.5px] font-semibold uppercase tracking-[0.08em]",
+                  tier.highlight ? "bg-lime/20 text-lime" : "bg-ink/8 text-ink-soft/70",
+                ].join(" ")}
+              >
+                {tier.note}
+              </span>
+            </div>
+
+            <div
+              className={`font-display mt-5 text-[26px] font-bold tracking-[-0.02em] ${tier.highlight ? "text-lime" : "text-ink"}`}
+            >
+              {tier.price}
+            </div>
+
+            <ul className="mt-6 flex-1 space-y-3">
+              {tier.items.map((item) => (
+                <li key={item} className="flex items-start gap-2.5">
+                  <CheckIcon className={`mt-0.5 h-4.5 w-4.5 shrink-0 ${tier.highlight ? "text-lime" : "text-sage"}`} />
+                  <span className={`text-[14px] leading-snug ${tier.highlight ? "text-cream/85" : "text-ink-soft/85"}`}>
+                    {item}
+                  </span>
+                </li>
+              ))}
+            </ul>
+
+            {tier.highlight ? (
+              <a
+                href={mailtoHref(t)}
+                className="nav-link mt-7 inline-flex items-center justify-center gap-2 rounded-full bg-cream px-6 py-3 text-forest transition hover:bg-lime"
+              >
+                {t.cta.button}
+                <ArrowIcon className="h-4 w-4" />
+              </a>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-8 max-w-3xl text-[13px] leading-relaxed text-ink-soft/65">{t.pricing.footnote}</p>
+    </Section>
+  );
+}
+
+/* -------------------------------------------------------------- ЖУРНАЛ -- */
+
+export function Blog({ t }: { t: Dict }) {
+  return (
+    <Section id="blog">
+      <Kicker>{t.blog.kicker}</Kicker>
+      <H2>{t.blog.title}</H2>
+      <Lead>{t.blog.sub}</Lead>
+
+      <div className="mt-12 divide-y divide-ink/10 border-y border-ink/10">
+        {t.blog.posts.map((post) => (
+          <article key={post.title} className="grid gap-3 py-7 md:grid-cols-[190px_1fr] md:gap-8">
+            <div className="nav-link pt-1 text-ink-soft/55">{post.date}</div>
+            <div>
+              <h3 className="font-display text-[19px] font-bold tracking-[-0.015em] text-ink">
+                {post.title}
+              </h3>
+              <p className="mt-2.5 max-w-2xl text-[14.5px] leading-relaxed text-ink-soft/85">
+                {post.text}
+              </p>
+            </div>
+          </article>
+        ))}
       </div>
     </Section>
   );
@@ -506,11 +431,11 @@ export function Faq({ t }: { t: Dict }) {
   const [open, setOpen] = useState<number | null>(0);
 
   return (
-    <Section id="faq" className="border-t border-line-soft">
+    <Section id="faq">
       <Kicker>{t.faq.kicker}</Kicker>
       <H2>{t.faq.title}</H2>
 
-      <div className="mt-12 max-w-3xl divide-y divide-line-soft border-y border-line-soft">
+      <div className="mt-12 max-w-3xl divide-y divide-ink/10 border-y border-ink/10">
         {t.faq.items.map((item, i) => {
           const isOpen = open === i;
           return (
@@ -521,35 +446,26 @@ export function Faq({ t }: { t: Dict }) {
                 aria-expanded={isOpen}
                 className="flex w-full items-center justify-between gap-6 py-5 text-left"
               >
-                <span className="text-[16px] font-medium text-cream">{item.q}</span>
+                <span className="font-display text-[16.5px] font-semibold text-ink">{item.q}</span>
                 <span
                   className={[
-                    "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-muted transition-transform duration-300",
-                    isOpen ? "rotate-45 border-amber/50 text-amber" : "",
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-ink/20 text-ink-soft transition-transform duration-300",
+                    isOpen ? "rotate-45 border-ink bg-ink text-cream" : "",
                   ].join(" ")}
                 >
                   <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
-                    <path
-                      d="M10 5v10M5 10h10"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                    />
+                    <path d="M10 5v10M5 10h10" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
                   </svg>
                 </span>
               </button>
               <div
                 className={[
                   "grid transition-all duration-300 ease-out",
-                  isOpen
-                    ? "grid-rows-[1fr] opacity-100"
-                    : "grid-rows-[0fr] opacity-0",
+                  isOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
                 ].join(" ")}
               >
                 <div className="overflow-hidden">
-                  <p className="pb-6 pr-12 text-[15px] leading-relaxed text-muted">
-                    {item.a}
-                  </p>
+                  <p className="pb-6 pr-10 text-[15px] leading-relaxed text-ink-soft/85">{item.a}</p>
                 </div>
               </div>
             </div>
@@ -564,62 +480,83 @@ export function Faq({ t }: { t: Dict }) {
 
 export function Cta({ t }: { t: Dict }) {
   return (
-    <Section className="border-t border-line-soft">
-      <div className="grain relative overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-surface to-ink-2 px-6 py-14 text-center md:px-16 md:py-20">
+    <Section>
+      <div className="relative overflow-hidden rounded-[2rem] bg-forest px-6 py-16 text-center text-cream md:px-16 md:py-24">
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute -top-24 left-1/2 h-64 w-[600px] -translate-x-1/2 rounded-full bg-[radial-gradient(ellipse_at_center,rgba(233,161,59,0.2),transparent_65%)]"
+          className="pointer-events-none absolute -top-32 left-1/2 h-80 w-[700px] -translate-x-1/2 rounded-full bg-[radial-gradient(ellipse_at_center,rgba(195,206,106,0.28),transparent_65%)]"
         />
-        <h2 className="relative text-balance text-[28px] font-semibold leading-tight tracking-[-0.025em] text-cream md:text-[40px]">
+        <h2 className="font-display relative text-balance text-[28px] font-bold leading-tight tracking-[-0.025em] md:text-[42px]">
           {t.cta.title}
         </h2>
-        <p className="relative mx-auto mt-5 max-w-xl text-[16px] leading-relaxed text-muted">
+        <p className="relative mx-auto mt-5 max-w-xl text-[16px] leading-relaxed text-cream/80">
           {t.cta.sub}
         </p>
-        <div className="relative mt-9">
-          <a
-            href={mailtoHref(t)}
-            className="glow-amber inline-flex items-center justify-center gap-2 rounded-xl bg-amber px-7 py-3.5 text-[15px] font-semibold text-[#1a1206] transition hover:bg-amber-soft"
-          >
+        <div className="relative mt-10">
+          <Pill as="a" href={mailtoHref(t)} size="lg" className="text-cream hover:bg-cream hover:text-forest">
             {t.cta.button}
             <ArrowIcon className="h-4 w-4" />
-          </a>
-          <p className="mt-4 text-[13px] text-muted-2">{t.cta.alt}</p>
+          </Pill>
+          <p className="mt-4 text-[13px] text-cream/60">{t.cta.alt}</p>
         </div>
       </div>
     </Section>
   );
 }
 
-/* -------------------------------------------------------------- FOOTER -- */
+/* -------------------------------------------------------------- ПОДВАЛ -- */
 
-export function Footer({ t }: { t: Dict }) {
+export function Footer({
+  t,
+  lang,
+  setLang,
+}: {
+  t: Dict;
+  lang: "en" | "ru";
+  setLang: (l: "en" | "ru") => void;
+}) {
   return (
-    <footer className="border-t border-line-soft py-12">
+    <footer className="border-t border-ink/10 py-12">
       <div className="container-x">
         <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
-          <div className="max-w-sm">
-            <p className="text-[14px] leading-relaxed text-muted">{t.footer.tagline}</p>
-            <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-line bg-surface/50 px-3 py-1.5 text-[12px] text-muted-2">
-              {t.footer.orda}
-            </p>
-          </div>
+          <p className="max-w-sm text-[14px] leading-relaxed text-ink-soft/80">{t.footer.tagline}</p>
 
-          <div className="text-[14px]">
-            <div className="text-[12px] uppercase tracking-[0.13em] text-muted-2">
-              {t.footer.contact}
+          <div className="flex flex-col gap-6 sm:flex-row sm:gap-14">
+            <div className="text-[14px]">
+              <div className="nav-link text-ink-soft/55">{t.footer.contact}</div>
+              <a
+                href={`mailto:${CONTACT_EMAIL}`}
+                className="mt-2.5 inline-block text-ink underline decoration-ink/25 underline-offset-4 transition hover:decoration-ink"
+              >
+                {CONTACT_EMAIL}
+              </a>
             </div>
-            <a
-              href={`mailto:${CONTACT_EMAIL}`}
-              className="mt-2 inline-block text-cream underline decoration-line underline-offset-4 transition hover:decoration-amber"
-            >
-              {CONTACT_EMAIL}
-            </a>
+
+            <div>
+              <div className="nav-link text-ink-soft/55">{t.footer.lang}</div>
+              <div className="mt-2.5 inline-flex rounded-full border border-ink/15 p-0.5">
+                {(["en", "ru"] as const).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setLang(l)}
+                    aria-pressed={lang === l}
+                    className={[
+                      "nav-link rounded-full px-3.5 py-1.5 transition",
+                      lang === l ? "bg-ink text-cream" : "text-ink-soft/60 hover:text-ink",
+                    ].join(" ")}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="mt-10 border-t border-line-soft pt-6 text-[12.5px] text-muted-2">
-          © {new Date().getFullYear()} Horsteppe. {t.footer.rights}
+        <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-ink/10 pt-6 text-[12.5px] text-ink-soft/60">
+          <span>© {new Date().getFullYear()} Horsteppe. {t.footer.rights}</span>
+          <span>{t.footer.orda}</span>
         </div>
       </div>
     </footer>

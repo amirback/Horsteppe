@@ -1,26 +1,23 @@
 @import "tailwindcss";
 
 @theme {
-  --color-ink: #08070a;
-  --color-ink-2: #0f0e13;
-  --color-surface: #16151c;
-  --color-surface-2: #1e1c25;
-  --color-line: #2a2732;
-  --color-line-soft: #211f29;
+  /* Палитра снята с макета: степь, травы, закатный свет */
+  --color-forest: #0e2a10;
+  --color-forest-2: #14351a;
+  --color-moss: #24471f;
+  --color-sage: #6d8c3e;
+  --color-olive: #93a845;
+  --color-lime: #c3ce6a;
+  --color-pale: #e6e7b8;
+  --color-cream: #f4f1d2;
 
-  --color-cream: #f6f2ec;
-  --color-muted: #a49c93;
-  --color-muted-2: #6f6a73;
+  --color-ink: #16341a;
+  --color-ink-soft: #26482a;
+  --color-ink-mute: #4a6b4a;
+  --color-paper: #f7f6e9;
 
-  --color-amber: #e9a13b;
-  --color-amber-soft: #f5c887;
-  --color-ember: #d4622a;
-  --color-dusk: #6c7bd9;
-
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-
-  --radius-xl2: 1.25rem;
+  --font-display: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 
 @layer base {
@@ -30,36 +27,36 @@
   }
 
   body {
-    background-color: var(--color-ink);
-    color: var(--color-cream);
+    background-color: var(--color-paper);
+    color: var(--color-ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
   ::selection {
-    background: var(--color-amber);
-    color: #16130c;
+    background: var(--color-ink);
+    color: var(--color-cream);
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-amber);
+    outline: 2px solid var(--color-ink);
     outline-offset: 3px;
-    border-radius: 4px;
+    border-radius: 6px;
   }
 }
 
 @layer utilities {
   .container-x {
     width: 100%;
-    max-width: 76rem;
+    max-width: 78rem;
     margin-inline: auto;
-    padding-inline: 1.25rem;
+    padding-inline: 1.5rem;
   }
 
   @media (min-width: 768px) {
     .container-x {
-      padding-inline: 2rem;
+      padding-inline: 2.5rem;
     }
   }
 
@@ -67,33 +64,26 @@
     text-wrap: balance;
   }
 
-  .grain::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0.035;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  .font-display {
+    font-family: var(--font-display);
   }
 
-  .hairline {
-    border: 1px solid var(--color-line);
-  }
-
-  .glow-amber {
-    box-shadow:
-      0 0 0 1px rgba(233, 161, 59, 0.22),
-      0 18px 60px -22px rgba(233, 161, 59, 0.45);
+  .nav-link {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 12.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
 
   .fade-up {
-    animation: fadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   @keyframes fadeUp {
     from {
       opacity: 0;
-      transform: translateY(14px);
+      transform: translateY(16px);
     }
     to {
       opacity: 1;
@@ -101,18 +91,19 @@
     }
   }
 
-  @keyframes drift {
+  @keyframes meshDrift {
     0%,
     100% {
-      transform: translate3d(0, 0, 0) scale(1);
+      transform: scale(1.06) translate3d(0, 0, 0);
     }
     50% {
-      transform: translate3d(0, -12px, 0) scale(1.03);
+      transform: scale(1.12) translate3d(-1.5%, -1%, 0);
     }
   }
 
-  .drift {
-    animation: drift 14s ease-in-out infinite;
+  .mesh-drift {
+    animation: meshDrift 26s ease-in-out infinite;
+    transform-origin: center;
   }
 
   @media (prefers-reduced-motion: reduce) {
