@@ -1,0 +1,43 @@
+# --- секреты: никогда не коммитим ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- зависимости ---
+node_modules/
+.pnp
+.pnp.js
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# --- сборка ---
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- деплой ---
+.vercel
+
+# --- сгенерированные медиа (тяжёлые, не место в git) ---
+output/
+projects/
+tmp/
+*.mp4
+*.mov
+*.mp3
+*.wav
+*.srt
+!web/public/**/*.mp4
+
+# --- система ---
+.DS_Store
+Icon?
+Thumbs.db
+*.log

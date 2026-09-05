@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #08070a;
+  --color-ink-2: #0f0e13;
+  --color-surface: #16151c;
+  --color-surface-2: #1e1c25;
+  --color-line: #2a2732;
+  --color-line-soft: #211f29;
+
+  --color-cream: #f6f2ec;
+  --color-muted: #a49c93;
+  --color-muted-2: #6f6a73;
+
+  --color-amber: #e9a13b;
+  --color-amber-soft: #f5c887;
+  --color-ember: #d4622a;
+  --color-dusk: #6c7bd9;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --radius-xl2: 1.25rem;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-ink);
+    color: var(--color-cream);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-amber);
+    color: #16130c;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+}
+
+@layer utilities {
+  .container-x {
+    width: 100%;
+    max-width: 76rem;
+    margin-inline: auto;
+    padding-inline: 1.25rem;
+  }
+
+  @media (min-width: 768px) {
+    .container-x {
+      padding-inline: 2rem;
+    }
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .grain::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .hairline {
+    border: 1px solid var(--color-line);
+  }
+
+  .glow-amber {
+    box-shadow:
+      0 0 0 1px rgba(233, 161, 59, 0.22),
+      0 18px 60px -22px rgba(233, 161, 59, 0.45);
+  }
+
+  .fade-up {
+    animation: fadeUp 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes fadeUp {
+    from {
+      opacity: 0;
+      transform: translateY(14px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes drift {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(0, -12px, 0) scale(1.03);
+    }
+  }
+
+  .drift {
+    animation: drift 14s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
