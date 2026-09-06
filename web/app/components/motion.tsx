@@ -128,7 +128,14 @@ export function Words({
 
 /* --------------------------------------------------------------- прочее -- */
 
-/** Элемент слегка тянется к курсору — приём с phantom.com. */
+/**
+ * Элемент слегка тянется к курсору — приём с phantom.com.
+ *
+ * className передаётся целиком, а не дописывается к "inline-block": порядок
+ * классов в атрибуте не решает, какая утилита display победит — Tailwind сам
+ * сортирует утилиты одной группы, и "hidden" рядом с "inline-flex" работает
+ * непредсказуемо. Прятать такие элементы нужно обёрткой.
+ */
 export function Magnetic({
   children,
   strength = 0.28,
@@ -151,7 +158,7 @@ export function Magnetic({
   return (
     <motion.div
       ref={ref}
-      className={`inline-block ${className}`}
+      className={className || "inline-block"}
       style={fine ? { x, y } : undefined}
       onPointerMove={(event) => {
         if (!fine || !ref.current) return;

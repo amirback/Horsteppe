@@ -1,29 +1,38 @@
 import type { ReactNode } from "react";
+import { MARK_PATHS } from "./mark-paths";
 
 /* ------------------------------------------------------------------ ЛОГОТИП */
 
 export function Mark({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 64 64" fill="none" className={className} aria-hidden="true">
+    <svg viewBox="0 0 100 100" fill="none" className={className} aria-hidden="true">
       <g fill="currentColor">
-        {/* грива и лист со стеблем */}
-        <path d="M32 12Q22 0 9 4Q19 13 32 12Z" />
-        <path d="M26 22Q13 13 1 19Q12 28 26 22Z" />
-        <path d="M23 33Q9 29 0 37Q12 42 23 33Z" />
-        <path d="M24 44Q12 45 6 57Q18 55 24 44Z" />
-        <path
-          d="M6 60Q16 50 28 42"
-          stroke="currentColor"
-          strokeWidth="1.9"
-          strokeLinecap="round"
-          fill="none"
-        />
-        {/* ухо */}
-        <path d="M34 11L33 1.5L41 9Z" />
-        {/* голова коня: вытянутая морда вправо-вниз, шея влево-вниз */}
-        <path d="M36 10C42 12 46 17 48 23C52 29 57 36 58 42C58.6 45 56.4 47.2 53 46.6C49 45.8 45 44.4 41 44.2C37 44 33 46 30 50L27 58C24 52 22 45 22 38C22 28 26 17 33 11Z" />
+        <path d={MARK_PATHS.mane} />
+        {MARK_PATHS.ears.map((d) => (
+          <path key={d} d={d} />
+        ))}
+        <path d={MARK_PATHS.head} />
+        <path d={MARK_PATHS.leaf} />
       </g>
-      <circle cx="44.5" cy="23.5" r="2" fill="#f4f1d2" />
+      <path
+        d={MARK_PATHS.stem}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+      <g fill="none" stroke="var(--color-paper)" strokeWidth="1.4" strokeLinecap="round" opacity="0.9">
+        {[...MARK_PATHS.maneLines, ...MARK_PATHS.leafVeins].map((d) => (
+          <path key={d} d={d} />
+        ))}
+      </g>
+      <circle cx={MARK_PATHS.eye.cx} cy={MARK_PATHS.eye.cy} r={MARK_PATHS.eye.r} fill="var(--color-paper)" />
+      <circle
+        cx={MARK_PATHS.nostril.cx}
+        cy={MARK_PATHS.nostril.cy}
+        r={MARK_PATHS.nostril.r}
+        fill="var(--color-paper)"
+      />
     </svg>
   );
 }

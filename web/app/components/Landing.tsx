@@ -134,16 +134,18 @@ export default function Landing({ lang }: { lang: Lang }) {
               </button>
             </div>
           ) : (
-            <Magnetic strength={0.18}>
-              <Pill
-                as="button"
-                onClick={() => setSearchOpen(true)}
-                className="hidden w-[200px] justify-start gap-3 pl-6 text-ink hover:bg-ink hover:text-cream sm:inline-flex"
-              >
-                <SearchIcon className="h-4 w-4" />
-                {t.nav.search}
-              </Pill>
-            </Magnetic>
+            <span className="hidden sm:inline-block">
+              <Magnetic strength={0.18}>
+                <Pill
+                  as="button"
+                  onClick={() => setSearchOpen(true)}
+                  className="w-[200px] justify-start gap-3 pl-6 text-ink hover:bg-ink hover:text-cream"
+                >
+                  <SearchIcon className="h-4 w-4" />
+                  {t.nav.search}
+                </Pill>
+              </Magnetic>
+            </span>
           )}
 
           {searchOpen && query.trim().length >= 2 ? (
@@ -240,7 +242,7 @@ export default function Landing({ lang }: { lang: Lang }) {
           {menuOpen ? mobileMenu : null}
         </nav>
         <div className="relative z-10">
-          <Hero t={t} />
+          <Hero t={t} lang={lang} />
         </div>
       </header>
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Dict } from "../lib/content";
 import { CONTACT_EMAIL } from "../lib/content";
 import { Words } from "./motion";
+import { Generator } from "./Generator";
 import {
   ArrowIcon,
   CheckIcon,
@@ -26,9 +27,9 @@ export function mailtoHref(t: Dict) {
 
 /* ---------------------------------------------------------------- ГЕРОЙ -- */
 
-export function Hero({ t }: { t: Dict }) {
+export function Hero({ t, lang }: { t: Dict; lang: Lang }) {
   return (
-    <div className="relative flex min-h-[100svh] flex-col items-center px-6 pb-24 pt-[17vh] text-center md:pt-[19.5vh]">
+    <div className="relative flex min-h-[100svh] flex-col items-center px-6 pb-24 pt-[13vh] text-center md:pt-[15vh]">
       <h1 className="font-display text-balance font-bold leading-[1.02] tracking-[-0.035em] text-ink [font-size:clamp(33px,5.15vw,68px)]">
         <Words text={t.hero.title} delay={0.15} />
       </h1>
@@ -44,17 +45,26 @@ export function Hero({ t }: { t: Dict }) {
       </motion.p>
 
       <motion.div
-        className="mt-11 md:mt-12"
+        className="mt-9 w-full md:mt-11"
         initial={{ opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.9, delay: 0.75, ease: [0.16, 1, 0.3, 1] }}
       >
-        <Magnetic strength={0.22}>
-          <Pill as="a" href="#how" size="hero" className="text-ink hover:bg-ink hover:text-cream">
-            {t.hero.cta}
-          </Pill>
-        </Magnetic>
+        <Generator lang={lang} variant="hero" />
       </motion.div>
+
+      <motion.a
+        href="#how"
+        className="nav-link mt-8 inline-flex items-center gap-2 text-ink-soft/60 transition hover:text-ink"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.9, delay: 1.05 }}
+      >
+        {t.hero.cta}
+        <svg viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+          <path d="M10 4v12m0 0l-5-5m5 5l5-5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </motion.a>
     </div>
   );
 }
