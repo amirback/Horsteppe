@@ -82,14 +82,14 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 continue
             db.set_progress(project_id, f"Кадры: сцена {i + 1}/{total}")
             image_path = work_dir / f"scene_{i:02d}.png"
-            cost = image_step.generate_image(cfg, scene["image_prompt"], image_path)
+            cost = image_step.generate_image(cfg, scene["image_prompt"], image_path, index=i)
             url = db.upload(f"projects/{project_id}/scene_{i:02d}/image.png", image_path.read_bytes(), "image/png")
             db.log_cost(project_id, "image", "fal", cost, f"scene {i}")
             db.update_scene(scene["id"], image_url=url, status="image_done")
             scene.update(image_url=url)
 
         # ---- 4. Image-to-video per scene (only in provider mode)
-        if cfg.video_mode == "provider":
+        if cfg.effective_video_mode == "provider":
             for i, scene in enumerate(scenes):
                 if scene.get("video_url"):
                     continue
@@ -113,7 +113,7 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 "audio_duration": scene["audio_duration_sec"],
                 "narration": scene.get("narration", ""),
             }
-            if cfg.video_mode == "provider" and scene.get("video_url"):
+            if cfg.effective_video_mode == "provider" and scene.get("video_url"):
                 entry["clip_path"] = _download(scene["video_url"], work_dir / f"scene_{i:02d}_clip.mp4")
             else:
                 entry["image_path"] = _download(scene["image_url"], work_dir / f"scene_{i:02d}.png")

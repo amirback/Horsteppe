@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 
+import safe_mode
 from config import COSTS, Config
 
 log = logging.getLogger("worker.tts")
@@ -25,6 +26,9 @@ class TtsError(Exception):
 def synthesize(cfg: Config, text: str, out_path: Path) -> float:
     """Generate an mp3 voice-over for `text`, save to out_path.
     Returns the estimated cost in USD."""
+    if not safe_mode.is_paid_allowed(cfg):
+        return safe_mode.placeholder_voice(text, out_path)
+
     url = f"{API_BASE}/text-to-speech/{cfg.elevenlabs_voice_id}"
     payload = {
         "text": text,

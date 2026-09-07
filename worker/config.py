@@ -49,6 +49,14 @@ class Config:
         )
     )
 
+    # Единственный выключатель денег. Включён по умолчанию: платный путь
+    # требует явного MVP_SAFE_MODE=0. Пустое значение тоже считается
+    # безопасным — ошибка в .env не должна открывать кошелёк.
+    mvp_safe_mode: bool = field(
+        default_factory=lambda: os.environ.get("MVP_SAFE_MODE", "1").strip().lower()
+        not in ("0", "false", "no", "off")
+    )
+
     video_mode: str = field(default_factory=lambda: os.environ.get("VIDEO_MODE", "kenburns"))
 
     # Формат кадра по умолчанию, если проект его не задал.
@@ -70,6 +78,16 @@ class Config:
         or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
     )
 
+    @property
+    def effective_video_mode(self) -> str:
+        """В безопасном режиме премиум-видео недоступно, чем бы ни был VIDEO_MODE."""
+        return "kenburns" if self.mvp_safe_mode else self.video_mode
+
+    @property
+    def effective_script_mode(self) -> str:
+        """Обращение к LLM тоже платное, поэтому в безопасном режиме — шаблон."""
+        return "mock" if self.mvp_safe_mode else self.script_mode
+
     def __post_init__(self) -> None:
         if self.video_format not in ("9:16", "16:9", "1:1", "4:5"):
             raise RuntimeError(
@@ -81,7 +99,7 @@ class Config:
             raise RuntimeError(f"VIDEO_MODE must be 'kenburns' or 'provider', got {self.video_mode!r}")
         if self.script_mode not in ("llm", "mock"):
             raise RuntimeError(f"SCRIPT_MODE must be 'llm' or 'mock', got {self.script_mode!r}")
-        if self.script_mode == "llm" and not self.anthropic_api_key:
+        if self.effective_script_mode == "llm" and not self.anthropic_api_key:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY is required when SCRIPT_MODE=llm. "
                 "Set SCRIPT_MODE=mock in worker/.env to test without an Anthropic key."

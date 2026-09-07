@@ -75,7 +75,7 @@ def _mock_script(topic: str, style: str, duration_sec: int) -> dict:
 
 def generate_script(cfg: Config, topic: str, style: str, duration_sec: int) -> dict:
     """Returns {"title": str, "scenes": [{"narration", "image_prompt"}, ...], "cost_usd": float}."""
-    if cfg.script_mode == "mock":
+    if cfg.effective_script_mode == "mock":
         log.info("script: SCRIPT_MODE=mock — skipping Claude, using template scenes")
         return _mock_script(topic, style, duration_sec)
 

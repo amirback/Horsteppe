@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 
+import safe_mode
 from config import COSTS, Config
 
 from ._timeout import CallTimeout, call_with_timeout
@@ -22,9 +23,12 @@ class ImageError(Exception):
     pass
 
 
-def generate_image(cfg: Config, prompt: str, out_path: Path) -> float:
+def generate_image(cfg: Config, prompt: str, out_path: Path, index: int = 0) -> float:
     """Generate a 1080x1920 image for `prompt`, save to out_path.
     Returns estimated cost in USD."""
+    if not safe_mode.is_paid_allowed(cfg):
+        return safe_mode.placeholder_image(prompt, out_path, (1080, 1920), index)
+
     os.environ.setdefault("FAL_KEY", cfg.fal_key)
     import fal_client
 

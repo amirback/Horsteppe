@@ -38,8 +38,14 @@ def _hang(*_args: object, **_kwargs: object) -> None:
 
 
 class FakeConfig:
-    """Минимальный конфиг: только поля, которые читают шаги."""
+    """Минимальный конфиг: только поля, которые читают шаги.
 
+    `mvp_safe_mode = False` здесь обязателен: иначе барьер безопасного режима
+    подменит вызов локальной заглушкой и проверять таймаут будет нечего.
+    """
+
+    mvp_safe_mode = False
+    video_mode = "provider"
     fal_key = "test-key-not-a-secret"
     fal_image_model = "fake/image-model"
     fal_video_model = "fake/video-model"

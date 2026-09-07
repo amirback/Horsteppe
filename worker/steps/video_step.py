@@ -12,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+import safe_mode
 from config import COSTS, Config
 
 from ._timeout import CallTimeout, call_with_timeout
@@ -30,6 +31,9 @@ class VideoError(Exception):
 def generate_clip(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> float:
     """Animate an image into a ~5s clip. `image_public_url` must be publicly
     reachable (we pass the Supabase Storage public URL). Returns cost in USD."""
+    # Защита в глубину: конвейер и так не зовёт этот шаг в безопасном режиме.
+    safe_mode.require_paid(cfg, "генерация видео")
+
     os.environ.setdefault("FAL_KEY", cfg.fal_key)
     import fal_client
 
