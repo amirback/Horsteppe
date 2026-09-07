@@ -119,15 +119,30 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 entry["image_path"] = _download(scene["image_url"], work_dir / f"scene_{i:02d}.png")
             render_scenes.append(entry)
 
+        aspect = project.get("aspect_ratio") or cfg.video_format
         final_path = render_step.render_final(
             render_scenes,
             work_dir,
             music_file=cfg.music_file or None,
-            aspect=project.get("aspect_ratio") or cfg.video_format,
+            aspect=aspect,
             transition_sec=cfg.transition_sec,
             subtitles=cfg.subtitles,
         )
-        final_duration = media.media_duration_sec(final_path)
+
+        # ---- 6. Проверка результата до отдачи пользователю.
+        # Длительности мало: чёрное видео нужной длины с тишиной её проходит.
+        db.set_progress(project_id, "Проверка результата…")
+        check = media.validate_final(final_path, media.frame_size(aspect))
+        for warning in check["warnings"]:
+            log.warning("[%s] качество: %s", project_id[:8], warning)
+        if not check["ok"]:
+            raise RuntimeError("Проверка финального файла не пройдена: " + "; ".join(check["errors"]))
+        final_duration = check["duration_sec"]
+        log.info(
+            "[%s] проверка пройдена: %.3f с, %dx%d, звук %s, яркость %.1f, пик %.1f dB",
+            project_id[:8], final_duration, check["width"], check["height"],
+            "есть" if check["has_audio"] else "нет", check["brightness"], check["peak_db"],
+        )
 
         db.set_progress(project_id, "Загрузка результата…")
         final_url = db.upload(f"projects/{project_id}/final.mp4", final_path.read_bytes(), "video/mp4")

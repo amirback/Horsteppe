@@ -406,3 +406,114 @@ def burn_subtitles(video: Path, ass: Path, out: Path) -> None:
         ["-i", str(video.resolve()), "-vf", subs, *_ENCODE, "-c:a", "copy", str(out.resolve())],
         cwd=ass.parent,
     )
+
+# ------------------------------------------------------- проверка финала --
+
+# Полностью чёрный кадр в ограниченном диапазоне даёт яркость 16, а не 0.
+MIN_BRIGHTNESS = 20.0
+# Цифровая тишина — около -91 dB. Настоящая речь никогда не бывает тише -50.
+MIN_PEAK_DB = -50.0
+# Насколько «одинаковыми» могут быть кадры, чтобы считаться замершими:
+# средняя разница яркости по 16x16 в градациях серого.
+FROZEN_DIFF = 1.5
+
+
+def _probe_stderr(path: Path, extra_args: list[str] | None = None) -> tuple[int, str]:
+    """Прогнать файл через ffmpeg в никуда и вернуть код возврата и лог."""
+    cmd = [ffmpeg_path(), "-hide_banner", "-i", str(path), *(extra_args or []), "-f", "null", "-"]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    return proc.returncode, proc.stderr
+
+
+def _gray_frame(path: Path, at: float) -> bytes:
+    """Кадр в момент `at` как 16x16 в градациях серого — 256 байт."""
+    cmd = [
+        ffmpeg_path(), "-hide_banner", "-loglevel", "error",
+        "-ss", f"{max(at, 0):.3f}", "-i", str(path), "-frames:v", "1",
+        "-vf", "scale=16:16,format=gray", "-f", "rawvideo", "-",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, timeout=300)
+    return proc.stdout
+
+
+def validate_final(path: Path, size: tuple[int, int]) -> dict:
+    """Проверить готовый MP4 по критериям CLAUDE.md §8.
+
+    Ошибки (`errors`) — то, при чём файл нельзя отдавать пользователю:
+    он не декодируется, в нём нет видео- или аудиопотока, разрешение не то.
+
+    Предупреждения (`warnings`) — подозрительные, но законные случаи: тёмный
+    кадр, тихий звук, застывший финал. Намеренно тёмное или тихое видео
+    существует, поэтому такие сигналы записываются, но не рушат проект.
+    Разделение важно: иначе валидация начнёт заваливать нормальные ролики.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not path.exists() or path.stat().st_size == 0:
+        return {"ok": False, "errors": ["финальный файл отсутствует или пуст"], "warnings": []}
+
+    code, log_text = _probe_stderr(path)
+    if code != 0:
+        errors.append(f"файл не декодируется (ffmpeg вернул {code})")
+
+    video_lines = re.findall(r"Stream #\d+:\d+.*: Video: .*", log_text)
+    audio_lines = re.findall(r"Stream #\d+:\d+.*: Audio: .*", log_text)
+    if not video_lines:
+        errors.append("нет видеопотока")
+    if not audio_lines:
+        errors.append("нет аудиопотока")
+
+    width = height = 0
+    if video_lines:
+        m = re.search(r"(\d{2,5})x(\d{2,5})", video_lines[0])
+        if m:
+            width, height = int(m.group(1)), int(m.group(2))
+            if (width, height) != size:
+                errors.append(f"разрешение {width}x{height}, ожидалось {size[0]}x{size[1]}")
+
+    duration = 0.0
+    try:
+        duration = media_duration_sec(path)
+    except Exception:  # noqa: BLE001 — длительность уже покрыта проверкой декодирования
+        errors.append("не удалось определить длительность")
+
+    # яркость: среднее по всем измеренным кадрам
+    _, bright_log = _probe_stderr(
+        path, ["-vf", "signalstats,metadata=print:key=lavfi.signalstats.YAVG"]
+    )
+    values = [float(v) for v in re.findall(r"lavfi\.signalstats\.YAVG=([\d.]+)", bright_log)]
+    brightness = sum(values) / len(values) if values else 0.0
+    if values and brightness < MIN_BRIGHTNESS:
+        warnings.append(f"кадр почти чёрный (яркость {brightness:.1f})")
+
+    # пиковый уровень звука
+    _, vol_log = _probe_stderr(path, ["-af", "volumedetect"])
+    peaks = re.findall(r"max_volume:\s*(-?[\d.]+) dB", vol_log)
+    peak_db = float(peaks[-1]) if peaks else -99.0
+    if peak_db < MIN_PEAK_DB:
+        warnings.append(f"звук почти тихий (пик {peak_db:.1f} dB)")
+
+    # застывший финал: последний кадр против кадра за две секунды до конца
+    frozen = False
+    if duration > 2.5 and not errors:
+        last = _gray_frame(path, duration - 0.1)
+        earlier = _gray_frame(path, duration - 2.1)
+        if last and earlier and len(last) == len(earlier):
+            diff = sum(abs(a - b) for a, b in zip(last, earlier)) / len(last)
+            frozen = diff < FROZEN_DIFF
+            if frozen:
+                warnings.append(f"последние 2 секунды не меняются (разница {diff:.2f})")
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "width": width,
+        "height": height,
+        "duration_sec": round(duration, 3),
+        "has_audio": bool(audio_lines),
+        "brightness": round(brightness, 1),
+        "peak_db": peak_db,
+        "frozen_ending": frozen,
+    }
