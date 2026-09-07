@@ -9,8 +9,6 @@ from __future__ import annotations
 import json
 import logging
 
-import anthropic
-
 from config import COSTS, Config
 
 log = logging.getLogger("worker.script")
@@ -95,6 +93,10 @@ Requirements:
 - The narration must flow as one continuous story across scenes: a hook in scene 1, development, and a punchy ending.
 - Each image_prompt is in ENGLISH, describes a single striking {style} shot for that scene, mentions vertical 9:16 composition, and contains NO text/captions/logos in the image.
 - No emojis, no hashtags, no scene numbers inside narration."""
+
+    # Импорт здесь, а не наверху: в безопасном режиме этот код не выполняется,
+    # и воркер должен запускаться без пакета anthropic — как и без fal_client.
+    import anthropic
 
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
     response = client.messages.create(

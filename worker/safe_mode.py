@@ -73,19 +73,22 @@ def placeholder_image(prompt: str, out_path: Path, size: tuple[int, int], index:
     color = PLACEHOLDER_COLORS[index % len(PLACEHOLDER_COLORS)]
     fontsdir, family = media.resolve_font()
 
-    caption = _escape_drawtext(prompt[:120])
     vf = [f"drawbox=x=0:y=0:w={w}:h={h}:color={color}@1:t=fill"]
     if fontsdir and family:
         font_file = _font_file(fontsdir, family)
         common = f"fontfile='{font_file}':fontcolor=0xf7f6e9:box=0"
         vf.append(
-            f"drawtext={common}:text='SAFE MODE':fontsize={int(h / 24)}"
-            f":x=(w-text_w)/2:y={int(h * 0.38)}"
+            f"drawtext={common}:text='SAFE MODE':fontsize={int(h / 22)}"
+            f":x=(w-text_w)/2:y={int(h * 0.36)}"
         )
-        vf.append(
-            f"drawtext={common}:text='{caption}':fontsize={int(h / 34)}"
-            f":x=(w-text_w)/2:y={int(h * 0.48)}"
-        )
+        # drawtext не переносит строки сам, поэтому промпт режется заранее:
+        # иначе длинная тема уезжает за край кадра.
+        line_height = int(h / 30)
+        for n, line in enumerate(_wrap(prompt, width=30, lines=3)):
+            vf.append(
+                f"drawtext={common}:text='{_escape_drawtext(line)}':fontsize={int(h / 40)}"
+                f":x=(w-text_w)/2:y={int(h * 0.45) + n * line_height}"
+            )
 
     media.run_ffmpeg([
         "-f", "lavfi", "-i", f"color=c=black:s={w}x{h}",
@@ -109,6 +112,26 @@ def placeholder_voice(text: str, out_path: Path) -> float:
     ])
     log.info("safe: тишина %.2f с вместо озвучки (%d слов)", seconds, words)
     return 0.0
+
+
+def _wrap(text: str, width: int, lines: int) -> list[str]:
+    """Разбить текст на строки не длиннее `width`, не больше `lines` штук."""
+    out: list[str] = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}".strip()
+        if len(candidate) > width and current:
+            out.append(current)
+            current = word
+            if len(out) == lines:
+                break
+        else:
+            current = candidate
+    if current and len(out) < lines:
+        out.append(current)
+    if len(out) == lines and len(" ".join(out)) < len(text):
+        out[-1] = out[-1][: width - 1] + "…"
+    return out
 
 
 def _font_file(fontsdir: Path, family: str) -> str:

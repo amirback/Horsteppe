@@ -65,7 +65,11 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             db.set_progress(project_id, f"Озвучка: сцена {i + 1}/{total}")
             audio_path = work_dir / f"scene_{i:02d}.mp3"
             cost = tts_step.synthesize(cfg, scene["narration"], audio_path)
-            duration = media.audio_duration_sec(audio_path)
+            # Точная длительность, а не оценка из заголовка mp3: по этому же
+            # числу строится таймлайн и субтитры, и оно показывается
+            # пользователю. Расхождение в 40 мс на сцену накапливается и делает
+            # длину в интерфейсе не равной длине файла.
+            duration = media.exact_duration_sec(audio_path)
             url = db.upload(f"projects/{project_id}/scene_{i:02d}/audio.mp3", audio_path.read_bytes(), "audio/mpeg")
             db.log_cost(project_id, "tts", "elevenlabs", cost, f"scene {i}")
             db.update_scene(
