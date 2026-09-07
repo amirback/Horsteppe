@@ -9,7 +9,13 @@ import httpx
 
 from config import COSTS, Config
 
+from ._timeout import CallTimeout, call_with_timeout
+
 log = logging.getLogger("worker.image")
+
+# Генерация кадра у fal обычно занимает секунды. Три минуты — заведомо
+# избыточный запас; всё, что дольше, считается зависшим.
+TIMEOUT_SEC = float(os.environ.get("FAL_IMAGE_TIMEOUT_SEC", "180"))
 
 
 class ImageError(Exception):
@@ -23,7 +29,8 @@ def generate_image(cfg: Config, prompt: str, out_path: Path) -> float:
     import fal_client
 
     try:
-        result = fal_client.subscribe(
+        result = call_with_timeout(
+            fal_client.subscribe,
             cfg.fal_image_model,
             arguments={
                 "prompt": prompt,
@@ -31,7 +38,11 @@ def generate_image(cfg: Config, prompt: str, out_path: Path) -> float:
                 "num_images": 1,
                 "enable_safety_checker": True,
             },
+            timeout=TIMEOUT_SEC,
+            label="fal.image",
         )
+    except CallTimeout as e:
+        raise ImageError(str(e)) from e
     except Exception as e:  # fal wraps HTTP errors in its own exceptions
         raise ImageError(f"fal.ai image generation failed: {e}") from e
 
