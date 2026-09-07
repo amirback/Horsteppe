@@ -188,8 +188,8 @@ export const content: Record<Lang, Dict> = {
     },
     cta: {
       title: "Tell us what video you need",
-      sub: "We will take your brief by hand and show you what the system produces on a real task.",
-      button: "Get in touch",
+      sub: "Describe it in one sentence — Horsteppe plans, produces and edits the finished video.",
+      button: "Create video",
       alt: "We reply within a day.",
     },
     footer: {
@@ -353,8 +353,8 @@ export const content: Record<Lang, Dict> = {
     },
     cta: {
       title: "Расскажите, какой ролик вам нужен",
-      sub: "Мы возьмём вашу задачу в работу вручную и покажем, что система выдаёт на реальном брифе.",
-      button: "Написать нам",
+      sub: "Опишите одной фразой — Horsteppe спланирует, соберёт и смонтирует готовый ролик.",
+      button: "Создать видео",
       alt: "Ответим в течение дня.",
     },
     footer: {
@@ -518,8 +518,8 @@ export const content: Record<Lang, Dict> = {
     },
     cta: {
       title: "Сізге қандай ролик керегін айтыңыз",
-      sub: "Тапсырмаңызды қолмен жұмысқа аламыз және жүйе нақты бриф бойынша не беретінін көрсетеміз.",
-      button: "Бізге жазу",
+      sub: "Бір сөйлеммен сипаттаңыз — Horsteppe жоспарлап, жинап, монтаждап береді.",
+      button: "Бейне жасау",
       alt: "Бір күн ішінде жауап береміз.",
     },
     footer: {

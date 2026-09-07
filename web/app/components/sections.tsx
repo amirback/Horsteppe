@@ -20,11 +20,6 @@ import {
 import { GrowBar, Magnetic, Marquee, Reveal, Stagger, StaggerItem, motion } from "./motion";
 import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 
-export function mailtoHref(t: Dict) {
-  const params = new URLSearchParams({ subject: t.waitlist.subject, body: t.waitlist.body });
-  return `mailto:${CONTACT_EMAIL}?${params.toString()}`;
-}
-
 /* ---------------------------------------------------------------- ГЕРОЙ -- */
 
 export function Hero({ t, lang }: { t: Dict; lang: Lang }) {
@@ -426,7 +421,7 @@ export function Pricing({ t }: { t: Dict }) {
 
             {tier.highlight ? (
               <a
-                href={mailtoHref(t)}
+                href="#top"
                 className="nav-link mt-7 inline-flex items-center justify-center gap-2 rounded-full bg-cream px-6 py-3 text-forest transition hover:bg-lime"
               >
                 {t.cta.button}
@@ -545,7 +540,7 @@ export function Cta({ t }: { t: Dict }) {
         </p>
         <div className="relative mt-10">
           <Magnetic strength={0.22}>
-            <Pill as="a" href={mailtoHref(t)} size="lg" className="text-cream hover:bg-cream hover:text-forest">
+            <Pill as="a" href="#top" size="lg" className="text-cream hover:bg-cream hover:text-forest">
               {t.cta.button}
               <ArrowIcon className="h-4 w-4" />
             </Pill>

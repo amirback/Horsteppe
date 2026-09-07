@@ -25,6 +25,33 @@ export type StudioDict = {
     steps: string[];
   };
   empty: string;
+  /** Ошибки API приходят машинными кодами — здесь их человеческие формулировки. */
+  errors: Record<string, string>;
+  auth: {
+    title: string;
+    lead: string;
+    email: string;
+    password: string;
+    signIn: string;
+    signUp: string;
+    toSignUp: string;
+    toSignIn: string;
+    confirm: string;
+    working: string;
+  };
+  project: {
+    back: string;
+    queued: string;
+    working: string;
+    ready: string;
+    failed: string;
+    download: string;
+    again: string;
+    scenes: string;
+    duration: string;
+    retry: string;
+    stages: string[];
+  };
 };
 
 export const studio: Record<Lang, StudioDict> = {
@@ -59,7 +86,7 @@ export const studio: Record<Lang, StudioDict> = {
       ],
     },
     notice:
-      "Early access: we run generations one at a time, by hand. Send your brief and we return the finished video — usually the same day.",
+      "Production takes a few minutes. You can close the page and come back — the project keeps running.",
     examplesLabel: "Or start from one of these",
     examples: [
       "The last astronaut on Earth hears a signal from an empty city",
@@ -82,6 +109,53 @@ export const studio: Record<Lang, StudioDict> = {
       ],
     },
     empty: "Write a couple of sentences about the video first.",
+    errors: {
+      backend_not_configured: "Generation is not connected yet — the administrator has not set up database access.",
+      unauthorized: "Sign in to create a video.",
+      invalid_request: "Malformed request.",
+      topic_too_short: "Write a couple of sentences about the video first.",
+      topic_too_long: "The description is too long — keep it under 500 characters.",
+      rate_limit_concurrent: "You already have a video generating. Wait for it to finish.",
+      rate_limit_daily: "Daily limit reached. Try again tomorrow.",
+      create_failed: "Could not create the project. Try again.",
+      queue_failed: "Could not queue the job. Try again.",
+      query_failed: "Request error.",
+      not_found: "Project not found.",
+      network: "Network unavailable. Try again.",
+      unknown: "Something went wrong.",
+    },
+    auth: {
+      title: "Sign in to Horsteppe",
+      lead: "An account keeps your projects and protects the generation budget.",
+      email: "Email",
+      password: "Password",
+      signIn: "Sign in",
+      signUp: "Create account",
+      toSignUp: "No account? Create one",
+      toSignIn: "Already have an account? Sign in",
+      confirm: "Check your inbox and confirm the address, then sign in.",
+      working: "…",
+    },
+    project: {
+      back: "New video",
+      queued: "Queued",
+      working: "Producing your video",
+      ready: "Video ready",
+      failed: "Production failed",
+      download: "Download MP4",
+      again: "Create another",
+      scenes: "Scenes",
+      duration: "Duration",
+      retry: "Try again",
+      stages: [
+        "Understanding the project",
+        "Writing the script",
+        "Recording the voice",
+        "Creating the visuals",
+        "Editing",
+        "Rendering the final video",
+      ],
+    },
   },
 
   ru: {
@@ -115,7 +189,7 @@ export const studio: Record<Lang, StudioDict> = {
       ],
     },
     notice:
-      "Ранний доступ: мы запускаем генерации по одной, вручную. Отправьте бриф — вернём готовый ролик, обычно в тот же день.",
+      "Сборка занимает несколько минут. Страницу можно закрыть и вернуться — проект продолжит собираться.",
     examplesLabel: "Или начните с примера",
     examples: [
       "Последний астронавт на Земле слышит сигнал из пустого города",
@@ -138,6 +212,53 @@ export const studio: Record<Lang, StudioDict> = {
       ],
     },
     empty: "Сначала напишите пару предложений о ролике.",
+    errors: {
+      backend_not_configured: "Генерация ещё не подключена — администратор не настроил доступ к базе.",
+      unauthorized: "Войдите, чтобы создать видео.",
+      invalid_request: "Некорректный запрос.",
+      topic_too_short: "Сначала напишите пару предложений о ролике.",
+      topic_too_long: "Описание слишком длинное — уложитесь в 500 символов.",
+      rate_limit_concurrent: "У вас уже генерируется видео. Дождитесь завершения.",
+      rate_limit_daily: "Суточный лимит исчерпан. Попробуйте завтра.",
+      create_failed: "Не удалось создать проект. Попробуйте ещё раз.",
+      queue_failed: "Не удалось поставить задачу в очередь. Попробуйте ещё раз.",
+      query_failed: "Ошибка запроса.",
+      not_found: "Проект не найден.",
+      network: "Сеть недоступна. Попробуйте ещё раз.",
+      unknown: "Что-то пошло не так.",
+    },
+    auth: {
+      title: "Вход в Horsteppe",
+      lead: "Аккаунт хранит ваши проекты и защищает бюджет генерации.",
+      email: "Почта",
+      password: "Пароль",
+      signIn: "Войти",
+      signUp: "Создать аккаунт",
+      toSignUp: "Нет аккаунта? Создать",
+      toSignIn: "Уже есть аккаунт? Войти",
+      confirm: "Проверьте почту, подтвердите адрес и войдите.",
+      working: "…",
+    },
+    project: {
+      back: "Новое видео",
+      queued: "В очереди",
+      working: "Собираем ваш ролик",
+      ready: "Ролик готов",
+      failed: "Не удалось собрать ролик",
+      download: "Скачать MP4",
+      again: "Создать ещё",
+      scenes: "Сцены",
+      duration: "Длительность",
+      retry: "Попробовать снова",
+      stages: [
+        "Разбираем задачу",
+        "Пишем сценарий",
+        "Записываем голос",
+        "Создаём визуал",
+        "Монтируем",
+        "Рендерим финальное видео",
+      ],
+    },
   },
 
   kk: {
@@ -171,7 +292,7 @@ export const studio: Record<Lang, StudioDict> = {
       ],
     },
     notice:
-      "Ерте қолжетімділік: генерацияны бір-бірлеп, қолмен жүргіземіз. Брифті жіберіңіз — дайын роликті қайтарамыз, әдетте сол күні.",
+      "Жинау бірнеше минут алады. Бетті жабуға болады — жоба жиналуын жалғастырады.",
     examplesLabel: "Немесе мысалдан бастаңыз",
     examples: [
       "Жердегі соңғы ғарышкер бос қаладан сигнал естиді",
@@ -194,5 +315,52 @@ export const studio: Record<Lang, StudioDict> = {
       ],
     },
     empty: "Алдымен ролик туралы бірер сөйлем жазыңыз.",
+    errors: {
+      backend_not_configured: "Генерация әлі қосылмаған — әкімші дерекқорға қолжетімділікті баптамаған.",
+      unauthorized: "Бейне жасау үшін кіріңіз.",
+      invalid_request: "Қате сұраныс.",
+      topic_too_short: "Алдымен ролик туралы бірер сөйлем жазыңыз.",
+      topic_too_long: "Сипаттама тым ұзын — 500 таңбаға сыйдырыңыз.",
+      rate_limit_concurrent: "Сізде бейне жасалып жатыр. Аяқталуын күтіңіз.",
+      rate_limit_daily: "Тәуліктік шек таусылды. Ертең қайталаңыз.",
+      create_failed: "Жобаны жасау мүмкін болмады. Қайталап көріңіз.",
+      queue_failed: "Тапсырманы кезекке қою мүмкін болмады. Қайталап көріңіз.",
+      query_failed: "Сұраныс қатесі.",
+      not_found: "Жоба табылмады.",
+      network: "Желі қолжетімсіз. Қайталап көріңіз.",
+      unknown: "Бірдеңе дұрыс болмады.",
+    },
+    auth: {
+      title: "Horsteppe-ке кіру",
+      lead: "Аккаунт жобаларыңызды сақтайды және генерация бюджетін қорғайды.",
+      email: "Пошта",
+      password: "Құпиясөз",
+      signIn: "Кіру",
+      signUp: "Аккаунт жасау",
+      toSignUp: "Аккаунт жоқ па? Жасау",
+      toSignIn: "Аккаунт бар ма? Кіру",
+      confirm: "Поштаңызды тексеріп, мекенжайды растаңыз да, кіріңіз.",
+      working: "…",
+    },
+    project: {
+      back: "Жаңа бейне",
+      queued: "Кезекте",
+      working: "Ролигіңізді жинап жатырмыз",
+      ready: "Ролик дайын",
+      failed: "Роликті жинау мүмкін болмады",
+      download: "MP4 жүктеу",
+      again: "Тағы жасау",
+      scenes: "Сценалар",
+      duration: "Ұзақтығы",
+      retry: "Қайталап көру",
+      stages: [
+        "Тапсырманы талдаймыз",
+        "Сценарий жазамыз",
+        "Дауыс жазамыз",
+        "Кадр жасаймыз",
+        "Монтаждаймыз",
+        "Финалдық бейнені рендерлейміз",
+      ],
+    },
   },
 };
