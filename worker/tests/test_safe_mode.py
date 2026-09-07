@@ -145,3 +145,41 @@ class ZeroOutgoingCallsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_worker_starts_without_provider_keys_in_safe_mode(monkeypatch):
+    """Безопасный режим существует ради проверки конвейера до появления ключей.
+
+    Раньше Config требовал ELEVENLABS_API_KEY и FAL_KEY всегда, поэтому
+    воркер вообще не стартовал без них — и проверить цепочку бесплатно было
+    невозможно.
+    """
+    from config import Config
+
+    for name in ("ELEVENLABS_API_KEY", "FAL_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
+    monkeypatch.setenv("MVP_SAFE_MODE", "1")
+
+    cfg = Config()
+    assert cfg.mvp_safe_mode is True
+    assert cfg.effective_script_mode == "mock"
+    assert cfg.effective_video_mode == "kenburns"
+
+
+def test_paid_mode_still_demands_provider_keys(monkeypatch):
+    """Снятие защиты без ключей должно падать сразу, а не на середине проекта."""
+    import pytest
+
+    from config import Config
+
+    for name in ("ELEVENLABS_API_KEY", "FAL_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    monkeypatch.setenv("MVP_SAFE_MODE", "0")
+
+    with pytest.raises(RuntimeError, match="ELEVENLABS_API_KEY"):
+        Config()

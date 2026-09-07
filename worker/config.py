@@ -31,7 +31,11 @@ class Config:
     llm_model: str = field(default_factory=lambda: os.environ.get("LLM_MODEL", "claude-opus-5"))
     script_mode: str = field(default_factory=lambda: os.environ.get("SCRIPT_MODE", "llm"))
 
-    elevenlabs_api_key: str = field(default_factory=lambda: _require("ELEVENLABS_API_KEY"))
+    # Пустое значение допустимо: в безопасном режиме озвучка заменяется
+    # тишиной нужной длины и ключ не используется. Проверка — в __post_init__.
+    elevenlabs_api_key: str = field(
+        default_factory=lambda: os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    )
     elevenlabs_voice_id: str = field(
         default_factory=lambda: os.environ.get("ELEVENLABS_VOICE_ID", "JBFqnCBsd6RMkjVDRZzb")
     )
@@ -39,7 +43,8 @@ class Config:
         default_factory=lambda: os.environ.get("ELEVENLABS_TTS_MODEL", "eleven_multilingual_v2")
     )
 
-    fal_key: str = field(default_factory=lambda: _require("FAL_KEY"))
+    # То же самое: в безопасном режиме кадры рисует FFmpeg, ключ не нужен.
+    fal_key: str = field(default_factory=lambda: os.environ.get("FAL_KEY", "").strip())
     fal_image_model: str = field(
         default_factory=lambda: os.environ.get("FAL_IMAGE_MODEL", "fal-ai/flux/schnell")
     )
@@ -104,6 +109,23 @@ class Config:
                 "ANTHROPIC_API_KEY is required when SCRIPT_MODE=llm. "
                 "Set SCRIPT_MODE=mock in worker/.env to test without an Anthropic key."
             )
+        # Ключи провайдеров обязательны только тогда, когда деньги разрешены.
+        # Требовать их всегда — значит запрещать запуск в безопасном режиме,
+        # который и существует ради проверки конвейера до появления ключей.
+        if not self.mvp_safe_mode:
+            missing = [
+                name
+                for name, value in (
+                    ("ELEVENLABS_API_KEY", self.elevenlabs_api_key),
+                    ("FAL_KEY", self.fal_key),
+                )
+                if not value
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"{', '.join(missing)} требуются при MVP_SAFE_MODE=0. "
+                    "Верните MVP_SAFE_MODE=1, чтобы работать на бесплатных заменителях."
+                )
         if self.music_file and not Path(self.music_file).exists():
             raise RuntimeError(f"MUSIC_FILE points to a missing file: {self.music_file}")
 
