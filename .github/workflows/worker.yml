@@ -1,0 +1,70 @@
+# Сборщик видео Horsteppe на бесплатных мощностях GitHub.
+#
+# Почему так, а не отдельный сервер: платный сервер требует ещё одного
+# аккаунта и карты, а здесь всё уже есть. Запуск идёт по расписанию, каждый
+# раз проходит очередь и выходит сам — поэтому задание всегда укладывается
+# в лимит GitHub и не обрывается посреди сборки.
+name: Horsteppe worker
+
+on:
+  schedule:
+    # Каждые 5 минут. GitHub может задержать запуск под нагрузкой — это
+    # нормально для раннего доступа, но не годится для показа вживую.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+# Одновременно работает только один сборщик: иначе два процесса возьмут
+# одну задачу. Очередь в базе это переживёт, но платить дважды не нужно.
+concurrency:
+  group: horsteppe-worker
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: worker/requirements.txt
+
+      - name: Шрифт с кириллицей для субтитров
+        # Без него субтитры превращаются в пустые квадраты — молча,
+        # без единой ошибки в логе.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-dejavu-core
+
+      - name: Зависимости
+        run: pip install -q -r worker/requirements.txt
+
+      - name: Сборка очереди
+        working-directory: worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          FAL_KEY: ${{ secrets.FAL_KEY }}
+
+          SCRIPT_MODE: llm
+          LLM_PROVIDER: openrouter
+          OPENROUTER_MODEL: openai/gpt-5.4-mini
+          IMAGE_PROVIDER: pollinations
+          VIDEO_MODE: kenburns
+          # Защита от трат снимается здесь и только здесь.
+          MVP_SAFE_MODE: "0"
+
+          VIDEO_FORMAT: "9:16"
+          TRANSITION_SEC: "0.5"
+          SUBTITLES: "1"
+          SUBTITLE_FONT_FILE: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+
+          # Выходим раньше лимита задания, чтобы завершиться самому.
+          WORKER_MAX_RUNTIME_SEC: "3000"
+          POLL_INTERVAL_SEC: "3"
+          PYTHONUNBUFFERED: "1"
+        run: python main.py

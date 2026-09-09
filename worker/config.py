@@ -98,6 +98,12 @@ class Config:
     poll_interval_sec: float = field(
         default_factory=lambda: float(os.environ.get("POLL_INTERVAL_SEC", "3"))
     )
+    # Ограничение времени жизни процесса. Нужно там, где воркер запускают по
+    # расписанию с жёстким лимитом на длительность задания: он обязан выйти
+    # сам и чисто, а не быть убитым посреди сборки. 0 — работать бесконечно.
+    max_runtime_sec: float = field(
+        default_factory=lambda: float(os.environ.get("WORKER_MAX_RUNTIME_SEC", "0"))
+    )
     worker_id: str = field(
         default_factory=lambda: os.environ.get("WORKER_ID")
         or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"

@@ -54,8 +54,14 @@ def main() -> None:
         cfg.worker_id, cfg.effective_script_mode, cfg.effective_video_mode, cfg.active_llm_model,
     )
 
+    started = time.monotonic()
     last_stale_check = 0.0
     while True:
+        if cfg.max_runtime_sec and time.monotonic() - started > cfg.max_runtime_sec:
+            # Выходим между задачами, а не посреди сборки: недоделанный проект
+            # вернётся в очередь целым и его подхватит следующий запуск.
+            log.info("отработано %.0f с, выхожу по лимиту времени", cfg.max_runtime_sec)
+            break
         try:
             now = time.monotonic()
             if now - last_stale_check > 300:
