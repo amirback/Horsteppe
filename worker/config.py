@@ -57,7 +57,9 @@ class Config:
 
     # То же самое: в безопасном режиме кадры рисует FFmpeg, ключ не нужен.
     fal_key: str = field(default_factory=lambda: os.environ.get("FAL_KEY", "").strip())
-    # Кто рисует кадры: pollinations (бесплатно, без ключа) или fal.
+    # Кто рисует кадры. Можно перечислить через запятую: провайдеры
+    # пробуются по очереди. Один недоступный поставщик не должен уносить
+    # весь проект — этого прямо требует ТЗ.
     image_provider: str = field(
         default_factory=lambda: os.environ.get("IMAGE_PROVIDER", "fal").strip().lower()
     )
@@ -110,6 +112,11 @@ class Config:
     )
 
     @property
+    def image_providers(self) -> list[str]:
+        """Цепочка провайдеров кадров в порядке приоритета."""
+        return [x.strip() for x in self.image_provider.split(",") if x.strip()]
+
+    @property
     def active_llm_model(self) -> str:
         """Модель, которая реально используется. Раньше лог всегда писал
         LLM_MODEL, даже когда сценарий шёл через OpenRouter, — и в логе стояла
@@ -137,9 +144,11 @@ class Config:
             raise RuntimeError(f"VIDEO_MODE must be 'kenburns' or 'provider', got {self.video_mode!r}")
         if self.script_mode not in ("llm", "mock"):
             raise RuntimeError(f"SCRIPT_MODE must be 'llm' or 'mock', got {self.script_mode!r}")
-        if self.image_provider not in ("fal", "pollinations"):
+        unknown = [x for x in self.image_providers if x not in ("fal", "pollinations")]
+        if unknown or not self.image_providers:
             raise RuntimeError(
-                f"IMAGE_PROVIDER must be 'fal' or 'pollinations', got {self.image_provider!r}"
+                f"IMAGE_PROVIDER: неизвестные значения {unknown or '(пусто)'}. "
+                "Допустимы 'fal' и 'pollinations', можно через запятую."
             )
         if self.llm_provider not in ("anthropic", "openrouter"):
             raise RuntimeError(
@@ -164,10 +173,10 @@ class Config:
                 name
                 for name, value in (
                     ("ELEVENLABS_API_KEY", self.elevenlabs_api_key),
-                    # fal нужен, только если он же и рисует кадры
+                    # fal нужен, только если он есть в цепочке или делает видео
                     *(
                         (("FAL_KEY", self.fal_key),)
-                        if self.image_provider == "fal" or self.video_mode == "provider"
+                        if "fal" in self.image_providers or self.video_mode == "provider"
                         else ()
                     ),
                 )

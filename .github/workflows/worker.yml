@@ -53,7 +53,10 @@ jobs:
           SCRIPT_MODE: llm
           LLM_PROVIDER: openrouter
           OPENROUTER_MODEL: openai/gpt-5.4-mini
-          IMAGE_PROVIDER: pollinations
+          # Порядок важен: fal быстрый и надёжный, когда на нём есть баланс;
+          # Pollinations бесплатный, но медленный и отдаёт 500 из дата-центров.
+          # Пока баланса нет, первый отваливается за секунду и работает второй.
+          IMAGE_PROVIDER: fal,pollinations
           VIDEO_MODE: kenburns
           # Защита от трат снимается здесь и только здесь.
           MVP_SAFE_MODE: "0"

@@ -115,3 +115,70 @@ def test_different_scenes_get_different_seeds(monkeypatch, cfg, tmp_path):
     step, s2 = _patch(monkeypatch, [FakeResponse(content=b"b" * 4000)])
     step.generate_image(cfg, "same prompt", tmp_path / "b.png", index=1)
     assert seed_a != s2["calls"][0][1]["seed"]
+
+
+def test_chain_falls_through_to_the_next_provider(monkeypatch, tmp_path):
+    """Падение одного провайдера не должно уносить весь проект.
+
+    Ровно это и случилось на сервере: Pollinations отдал 500, и проект
+    погиб, хотя сценарий и озвучка уже были оплачены.
+    """
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test")
+    monkeypatch.setenv("MVP_SAFE_MODE", "0")
+    monkeypatch.setenv("SCRIPT_MODE", "mock")
+    monkeypatch.setenv("IMAGE_PROVIDER", "pollinations,fal")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test")
+    monkeypatch.setenv("FAL_KEY", "test")
+    monkeypatch.setenv("POLLINATIONS_BACKOFF_SEC", "0")
+    from config import Config
+    from steps import image_step
+
+    cfg = Config()
+    assert cfg.image_providers == ["pollinations", "fal"]
+
+    # Pollinations всегда отвечает 500…
+    state = {"responses": [FakeResponse(status=503) for _ in range(3)], "calls": []}
+    monkeypatch.setattr(image_step.httpx, "Client", lambda **kw: FakeClient(state))
+
+    # …а fal отрабатывает.
+    used = {}
+
+    def fake_fal(cfg_, prompt, out_path):
+        used["fal"] = True
+        out_path.write_bytes(b"f" * 3000)
+        return 0.006
+
+    monkeypatch.setattr(image_step, "_via_fal", fake_fal)
+
+    out = tmp_path / "s.png"
+    cost = image_step.generate_image(cfg, "prompt", out, index=0)
+    assert used.get("fal") is True
+    assert cost == 0.006
+    assert out.exists()
+
+
+def test_chain_reports_every_provider_when_all_fail(monkeypatch, tmp_path):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test")
+    monkeypatch.setenv("MVP_SAFE_MODE", "0")
+    monkeypatch.setenv("SCRIPT_MODE", "mock")
+    monkeypatch.setenv("IMAGE_PROVIDER", "pollinations,fal")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test")
+    monkeypatch.setenv("FAL_KEY", "test")
+    monkeypatch.setenv("POLLINATIONS_BACKOFF_SEC", "0")
+    from config import Config
+    from steps import image_step
+
+    state = {"responses": [FakeResponse(status=503) for _ in range(3)], "calls": []}
+    monkeypatch.setattr(image_step.httpx, "Client", lambda **kw: FakeClient(state))
+
+    def broken_fal(cfg_, prompt, out_path):
+        raise image_step.ImageError("баланс исчерпан")
+
+    monkeypatch.setattr(image_step, "_via_fal", broken_fal)
+
+    with pytest.raises(image_step.ImageError) as e:
+        image_step.generate_image(Config(), "prompt", tmp_path / "s.png", index=0)
+    # В сообщении должны быть обе причины, иначе чинить придётся вслепую.
+    assert "pollinations" in str(e.value) and "баланс исчерпан" in str(e.value)

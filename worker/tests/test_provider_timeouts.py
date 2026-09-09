@@ -48,6 +48,7 @@ class FakeConfig:
     video_mode = "provider"
     # Тест проверяет именно платный путь fal, поэтому провайдер задан явно.
     image_provider = "fal"
+    image_providers = ["fal"]
     fal_key = "test-key-not-a-secret"
     fal_image_model = "fake/image-model"
     fal_video_model = "fake/video-model"
