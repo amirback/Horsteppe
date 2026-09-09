@@ -57,6 +57,14 @@ class Config:
 
     # То же самое: в безопасном режиме кадры рисует FFmpeg, ключ не нужен.
     fal_key: str = field(default_factory=lambda: os.environ.get("FAL_KEY", "").strip())
+    # Кто рисует кадры: pollinations (бесплатно, без ключа) или fal.
+    image_provider: str = field(
+        default_factory=lambda: os.environ.get("IMAGE_PROVIDER", "fal").strip().lower()
+    )
+    pollinations_model: str = field(
+        default_factory=lambda: os.environ.get("POLLINATIONS_MODEL", "flux")
+    )
+
     fal_image_model: str = field(
         default_factory=lambda: os.environ.get("FAL_IMAGE_MODEL", "fal-ai/flux/schnell")
     )
@@ -123,6 +131,10 @@ class Config:
             raise RuntimeError(f"VIDEO_MODE must be 'kenburns' or 'provider', got {self.video_mode!r}")
         if self.script_mode not in ("llm", "mock"):
             raise RuntimeError(f"SCRIPT_MODE must be 'llm' or 'mock', got {self.script_mode!r}")
+        if self.image_provider not in ("fal", "pollinations"):
+            raise RuntimeError(
+                f"IMAGE_PROVIDER must be 'fal' or 'pollinations', got {self.image_provider!r}"
+            )
         if self.llm_provider not in ("anthropic", "openrouter"):
             raise RuntimeError(
                 f"LLM_PROVIDER must be 'anthropic' or 'openrouter', got {self.llm_provider!r}"
@@ -146,7 +158,12 @@ class Config:
                 name
                 for name, value in (
                     ("ELEVENLABS_API_KEY", self.elevenlabs_api_key),
-                    ("FAL_KEY", self.fal_key),
+                    # fal нужен, только если он же и рисует кадры
+                    *(
+                        (("FAL_KEY", self.fal_key),)
+                        if self.image_provider == "fal" or self.video_mode == "provider"
+                        else ()
+                    ),
                 )
                 if not value
             ]
@@ -168,6 +185,9 @@ COSTS = {
     "elevenlabs_per_1k_chars": float(os.environ.get("COST_ELEVENLABS_1K_CHARS", "0.18")),
     # Flux schnell on fal ~ $0.003 per megapixel; 1080x1920 ~ 2MP
     "fal_image_per_call": float(os.environ.get("COST_FAL_IMAGE", "0.006")),
+    # Pollinations бесплатен — ноль записывается явно, чтобы учёт затрат
+    # оставался полным и не было дыр в истории проекта.
+    "pollinations_per_call": 0.0,
     # Kling standard 5s clip on fal, approx
     "fal_video_per_clip": float(os.environ.get("COST_FAL_VIDEO_CLIP", "0.35")),
     # Запасная оценка, если OpenRouter не вернул реальную стоимость запроса.
