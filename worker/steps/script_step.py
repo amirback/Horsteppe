@@ -1,13 +1,18 @@
-"""Step 1: topic -> script broken into scenes, via Claude with structured outputs.
+"""Шаг 1: тема -> сценарий, разбитый на сцены.
 
-SCRIPT_MODE=mock (config) bypasses Claude entirely with a template generator —
-use this to test the rest of the pipeline (TTS/images/render) for $0 before
-paying for Anthropic API access.
+Провайдер выбирается настройкой LLM_PROVIDER: `openrouter` или `anthropic`.
+Оба пути требуют строгий JSON по схеме — разбирать свободный текст регулярками
+нельзя, это источник тихих поломок.
+
+SCRIPT_MODE=mock обходит модель целиком и собирает сценарий шаблоном: так
+проверяется остальной конвейер (озвучка, кадры, монтаж) за ноль денег.
 """
 from __future__ import annotations
 
 import json
 import logging
+
+import httpx
 
 from config import COSTS, Config
 
@@ -44,6 +49,10 @@ SCENES_SCHEMA = {
 
 class ScriptRefusedError(Exception):
     """The topic was declined by content moderation."""
+
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+REQUEST_TIMEOUT = 120
 
 
 def _scene_count(duration_sec: int) -> int:
@@ -94,11 +103,100 @@ Requirements:
 - Each image_prompt is in ENGLISH, describes a single striking {style} shot for that scene, mentions vertical 9:16 composition, and contains NO text/captions/logos in the image.
 - No emojis, no hashtags, no scene numbers inside narration."""
 
+    if cfg.llm_provider == "openrouter":
+        data, cost = _via_openrouter(cfg, prompt)
+    else:
+        data, cost = _via_anthropic(cfg, prompt)
+
+    scenes = _validate(data, n)
+    log.info("script: %d сцен, провайдер %s, стоимость $%.4f", len(scenes), cfg.llm_provider, cost)
+    return {"title": data.get("title", topic), "scenes": scenes, "cost_usd": cost}
+
+
+def _validate(data: dict, expected: int) -> list[dict]:
+    """Модель могла вернуть синтаксически верный, но бессмысленный ответ."""
+    scenes = data.get("scenes") or []
+    if not (2 <= len(scenes) <= 8):
+        raise RuntimeError(f"модель вернула {len(scenes)} сцен, ожидалось около {expected}")
+    for s in scenes:
+        if not (s.get("narration") or "").strip() or not (s.get("image_prompt") or "").strip():
+            raise RuntimeError("модель вернула пустое поле сцены")
+    return scenes
+
+
+def _via_openrouter(cfg: Config, prompt: str) -> tuple[dict, float]:
+    """Сценарий через OpenRouter (совместим с OpenAI Chat Completions).
+
+    `usage.include` просит вернуть реальную стоимость запроса — она точнее
+    любой оценки по токенам, потому что цены у моделей разные и меняются.
+    """
+    payload = {
+        "model": cfg.openrouter_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 4000,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "scenes", "strict": True, "schema": SCENES_SCHEMA},
+        },
+        "usage": {"include": True},
+    }
+    headers = {
+        "Authorization": f"Bearer {cfg.openrouter_api_key}",
+        "Content-Type": "application/json",
+        # OpenRouter просит эти заголовки для атрибуции трафика.
+        "HTTP-Referer": "https://horsteppe.vercel.app",
+        "X-Title": "Horsteppe",
+    }
+
+    with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
+        resp = client.post(OPENROUTER_URL, json=payload, headers=headers)
+
+    if resp.status_code == 401:
+        raise RuntimeError("OpenRouter: неверный ключ")
+    if resp.status_code == 402:
+        raise RuntimeError("OpenRouter: закончились средства на счёте")
+    if resp.status_code == 429:
+        raise RuntimeError("OpenRouter: слишком много запросов, попробуйте позже")
+    if resp.status_code != 200:
+        raise RuntimeError(f"OpenRouter вернул {resp.status_code}: {resp.text[:400]}")
+
+    body = resp.json()
+    choices = body.get("choices") or []
+    if not choices:
+        raise RuntimeError("OpenRouter вернул ответ без вариантов")
+
+    message = choices[0].get("message") or {}
+    if message.get("refusal"):
+        raise ScriptRefusedError("Тема отклонена модерацией. Переформулируйте запрос.")
+    if choices[0].get("finish_reason") == "length":
+        raise RuntimeError("Сценарий не поместился в лимит токенов — повторите")
+
+    content = (message.get("content") or "").strip()
+    if not content:
+        # Часть моделей возвращает рассуждения без итогового ответа —
+        # это уже ломало конвейер раньше, поэтому проверка явная.
+        raise RuntimeError("OpenRouter вернул пустой ответ модели")
+
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"OpenRouter вернул не JSON: {content[:200]}") from e
+
+    usage = body.get("usage") or {}
+    cost = usage.get("cost")
+    if cost is None:
+        cost = COSTS["openrouter_fallback_per_call"]
+        log.warning("OpenRouter не вернул стоимость, записана оценка")
+    return data, float(cost)
+
+
+def _via_anthropic(cfg: Config, prompt: str) -> tuple[dict, float]:
+    """Сценарий через Anthropic напрямую."""
     # Импорт здесь, а не наверху: в безопасном режиме этот код не выполняется,
     # и воркер должен запускаться без пакета anthropic — как и без fal_client.
     import anthropic
 
-    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
+    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, timeout=REQUEST_TIMEOUT)
     response = client.messages.create(
         model=cfg.llm_model,
         max_tokens=4000,
@@ -107,26 +205,14 @@ Requirements:
     )
 
     if response.stop_reason == "refusal":
-        raise ScriptRefusedError(
-            "Тема отклонена модерацией контента. Переформулируйте запрос."
-        )
+        raise ScriptRefusedError("Тема отклонена модерацией контента. Переформулируйте запрос.")
     if response.stop_reason == "max_tokens":
-        raise RuntimeError("Script generation hit the token limit — retry")
+        raise RuntimeError("Сценарий не поместился в лимит токенов — повторите")
 
     text = next(b.text for b in response.content if b.type == "text")
-    data = json.loads(text)
-
-    scenes = data.get("scenes") or []
-    if not (2 <= len(scenes) <= 8):
-        raise RuntimeError(f"LLM returned {len(scenes)} scenes, expected {n}")
-    for s in scenes:
-        if not s["narration"].strip() or not s["image_prompt"].strip():
-            raise RuntimeError("LLM returned an empty scene field")
-
     usage = response.usage
     cost = (
         usage.input_tokens / 1_000_000 * COSTS["anthropic_input_per_mtok"]
         + usage.output_tokens / 1_000_000 * COSTS["anthropic_output_per_mtok"]
     )
-    log.info("script: %d scenes, %d in / %d out tokens", len(scenes), usage.input_tokens, usage.output_tokens)
-    return {"title": data.get("title", topic), "scenes": scenes, "cost_usd": cost}
+    return json.loads(text), cost

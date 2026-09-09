@@ -31,6 +31,18 @@ class Config:
     llm_model: str = field(default_factory=lambda: os.environ.get("LLM_MODEL", "claude-opus-5"))
     script_mode: str = field(default_factory=lambda: os.environ.get("SCRIPT_MODE", "llm"))
 
+    # Кто пишет сценарий. Провайдер выбирается настройкой, а не правкой кода:
+    # ТЗ требует независимости от конкретного поставщика модели.
+    llm_provider: str = field(
+        default_factory=lambda: os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
+    )
+    openrouter_api_key: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", "").strip()
+    )
+    openrouter_model: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_MODEL", "openai/gpt-5.4-mini")
+    )
+
     # Пустое значение допустимо: в безопасном режиме озвучка заменяется
     # тишиной нужной длины и ключ не используется. Проверка — в __post_init__.
     elevenlabs_api_key: str = field(
@@ -104,11 +116,21 @@ class Config:
             raise RuntimeError(f"VIDEO_MODE must be 'kenburns' or 'provider', got {self.video_mode!r}")
         if self.script_mode not in ("llm", "mock"):
             raise RuntimeError(f"SCRIPT_MODE must be 'llm' or 'mock', got {self.script_mode!r}")
-        if self.effective_script_mode == "llm" and not self.anthropic_api_key:
+        if self.llm_provider not in ("anthropic", "openrouter"):
             raise RuntimeError(
-                "ANTHROPIC_API_KEY is required when SCRIPT_MODE=llm. "
-                "Set SCRIPT_MODE=mock in worker/.env to test without an Anthropic key."
+                f"LLM_PROVIDER must be 'anthropic' or 'openrouter', got {self.llm_provider!r}"
             )
+        if self.effective_script_mode == "llm":
+            needed, name = (
+                (self.openrouter_api_key, "OPENROUTER_API_KEY")
+                if self.llm_provider == "openrouter"
+                else (self.anthropic_api_key, "ANTHROPIC_API_KEY")
+            )
+            if not needed:
+                raise RuntimeError(
+                    f"{name} требуется при SCRIPT_MODE=llm и LLM_PROVIDER={self.llm_provider}. "
+                    "Поставьте SCRIPT_MODE=mock, чтобы работать без ключа."
+                )
         # Ключи провайдеров обязательны только тогда, когда деньги разрешены.
         # Требовать их всегда — значит запрещать запуск в безопасном режиме,
         # который и существует ради проверки конвейера до появления ключей.
@@ -141,4 +163,6 @@ COSTS = {
     "fal_image_per_call": float(os.environ.get("COST_FAL_IMAGE", "0.006")),
     # Kling standard 5s clip on fal, approx
     "fal_video_per_clip": float(os.environ.get("COST_FAL_VIDEO_CLIP", "0.35")),
+    # Запасная оценка, если OpenRouter не вернул реальную стоимость запроса.
+    "openrouter_fallback_per_call": float(os.environ.get("COST_OPENROUTER_CALL", "0.002")),
 }
