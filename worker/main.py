@@ -51,7 +51,7 @@ def main() -> None:
     db = Db(cfg)
     log.info(
         "worker %s started (script_mode=%s, video_mode=%s, model=%s)",
-        cfg.worker_id, cfg.script_mode, cfg.video_mode, cfg.llm_model,
+        cfg.worker_id, cfg.effective_script_mode, cfg.effective_video_mode, cfg.active_llm_model,
     )
 
     last_stale_check = 0.0

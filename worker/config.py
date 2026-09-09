@@ -96,6 +96,13 @@ class Config:
     )
 
     @property
+    def active_llm_model(self) -> str:
+        """Модель, которая реально используется. Раньше лог всегда писал
+        LLM_MODEL, даже когда сценарий шёл через OpenRouter, — и в логе стояла
+        одна модель, а платили за другую."""
+        return self.openrouter_model if self.llm_provider == "openrouter" else self.llm_model
+
+    @property
     def effective_video_mode(self) -> str:
         """В безопасном режиме премиум-видео недоступно, чем бы ни был VIDEO_MODE."""
         return "kenburns" if self.mvp_safe_mode else self.video_mode
