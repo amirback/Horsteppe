@@ -68,9 +68,15 @@ export async function generateMetadata({
       title: seo.title,
       description: seo.description,
       locale: LOCALE_META[raw].ogLocale,
+      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Horsteppe" }],
       alternateLocale: LOCALES.filter((l) => l !== raw).map((l) => LOCALE_META[l].ogLocale),
     },
-    twitter: { card: "summary_large_image", title: seo.title, description: seo.description },
+    twitter: {
+      card: "summary_large_image",
+      title: seo.title,
+      description: seo.description,
+      images: ["/og.png"],
+    },
     robots: { index: true, follow: true },
   };
 }

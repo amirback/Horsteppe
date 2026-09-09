@@ -1,60 +1,35 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Image from "next/image";
 import { motion } from "motion/react";
-import { MARK_PATHS } from "./mark-paths";
 
 /* ------------------------------------------------------------------ ЛОГОТИП */
 
 /**
- * Фирменный знак. При `animate` грива собирается прядь за прядью, голова
- * появляется следом — это единственная анимация, которая играет при первой
- * загрузке страницы, поэтому она задаёт тон всему остальному.
+ * Фирменный знак — файл, присланный основателем, а не перерисовка.
+ *
+ * Фон у исходника зашит в картинку и чисто не отделяется: местами он такой же
+ * тёмный, как контур рисунка. Поэтому знак используется значком со скруглением:
+ * графика сохраняется без искажений, а зелёный фон совпадает с брендом.
  */
 export function Mark({ className = "", animate = false }: { className?: string; animate?: boolean }) {
-  const strands = [...MARK_PATHS.ears, MARK_PATHS.mane];
-  const draw = {
-    hidden: { opacity: 0, x: -6 },
-    shown: (i: number) => ({
-      opacity: 1,
-      x: 0,
-      transition: { duration: 0.7, delay: 0.08 * i, ease: [0.16, 1, 0.3, 1] as const },
-    }),
-  };
-
   return (
-    <svg viewBox="0 0 100 100" fill="none" className={className} aria-hidden="true">
-      <motion.g
-        fill="currentColor"
-        initial={animate ? "hidden" : false}
-        animate={animate ? "shown" : undefined}
-      >
-        {strands.map((d, i) => (
-          <motion.path key={d} d={d} custom={i} variants={animate ? draw : undefined} />
-        ))}
-        <motion.path d={MARK_PATHS.head} custom={strands.length} variants={animate ? draw : undefined} />
-        <motion.path d={MARK_PATHS.leaf} custom={strands.length + 1} variants={animate ? draw : undefined} />
-      </motion.g>
-      <path
-        d={MARK_PATHS.stem}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
+    <motion.span
+      className={`relative block overflow-hidden rounded-[26%] ${className}`}
+      initial={animate ? { opacity: 0, scale: 0.86, rotate: -6 } : false}
+      animate={animate ? { opacity: 1, scale: 1, rotate: 0 } : undefined}
+      transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <Image
+        src="/logo.png"
+        alt=""
+        fill
+        sizes="48px"
+        priority
+        className="object-cover"
       />
-      <g fill="none" stroke="var(--color-paper)" strokeWidth="1.4" strokeLinecap="round" opacity="0.9">
-        {[...MARK_PATHS.maneLines, ...MARK_PATHS.leafVeins].map((d) => (
-          <path key={d} d={d} />
-        ))}
-      </g>
-      <circle cx={MARK_PATHS.eye.cx} cy={MARK_PATHS.eye.cy} r={MARK_PATHS.eye.r} fill="var(--color-paper)" />
-      <circle
-        cx={MARK_PATHS.nostril.cx}
-        cy={MARK_PATHS.nostril.cy}
-        r={MARK_PATHS.nostril.r}
-        fill="var(--color-paper)"
-      />
-    </svg>
+    </motion.span>
   );
 }
 
