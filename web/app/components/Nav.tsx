@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { content } from "../lib/content";
+import { studio } from "../lib/studio-content";
 import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 import { Logo } from "./ui";
 import { Magnetic, motion } from "./motion";
@@ -125,7 +126,16 @@ export function Nav({
               </Link>
             ))}
             {email ? (
-              <span className="nav-link truncate px-3 py-3 text-ink-soft/60">{email}</span>
+              <>
+                <Link
+                  href={`/${lang}/projects`}
+                  onClick={() => setOpen(false)}
+                  className="nav-link rounded-xl px-3 py-3 text-ink transition hover:bg-ink/5"
+                >
+                  {studio[lang].library.title}
+                </Link>
+                <span className="nav-link truncate px-3 py-2 text-ink-soft/50">{email}</span>
+              </>
             ) : (
               <Link
                 href={`/${lang}/login`}

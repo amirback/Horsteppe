@@ -1,9 +1,46 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { isAdminReady } from "@/lib/supabase/env";
+import { isAdminReady, isBackendReady } from "@/lib/supabase/env";
 
 const STYLES = ["cinematic", "documentary", "explainer", "product", "anime"];
+const LIST_LIMIT = 50;
+
+/** Список проектов пользователя. Политики доступа отдают только его собственные. */
+export async function GET() {
+  if (!isBackendReady()) {
+    return NextResponse.json({ error: "backend_not_configured" }, { status: 503 });
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id, topic, style, duration_sec, aspect_ratio, status, status_detail, cost_usd, created_at")
+    .order("created_at", { ascending: false })
+    .limit(LIST_LIMIT);
+
+  if (error) {
+    return NextResponse.json({ error: "query_failed" }, { status: 500 });
+  }
+
+  const projects = data ?? [];
+  return NextResponse.json({
+    projects,
+    counts: {
+      total: projects.length,
+      active: projects.filter((p) => p.status === "queued" || p.status === "generating").length,
+      done: projects.filter((p) => p.status === "done").length,
+      failed: projects.filter((p) => p.status === "failed").length,
+    },
+  });
+}
 const FORMATS = ["9:16", "16:9", "1:1", "4:5"];
 
 /**

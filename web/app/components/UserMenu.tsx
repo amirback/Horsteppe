@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { content } from "../lib/content";
+import { studio } from "../lib/studio-content";
 import type { Lang } from "../lib/i18n";
 import { motion } from "./motion";
 
@@ -16,6 +17,7 @@ import { motion } from "./motion";
  */
 export function UserMenu({ lang, email }: { lang: Lang; email: string }) {
   const t = content[lang];
+  const library = studio[lang].library;
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -76,6 +78,13 @@ export function UserMenu({ lang, email }: { lang: Lang; email: string }) {
             <div className="nav-link text-ink-soft/50">{t.nav.account}</div>
             <div className="mt-1 truncate text-[13.5px] text-ink">{email}</div>
           </div>
+          <Link
+            href={`/${lang}/projects`}
+            onClick={() => setOpen(false)}
+            className="block px-4 py-3 text-[14px] text-ink-soft transition hover:bg-ink/5 hover:text-ink"
+          >
+            {library.title}
+          </Link>
           <Link
             href={`/${lang}#top`}
             onClick={() => setOpen(false)}

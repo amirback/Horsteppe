@@ -39,6 +39,17 @@ export type StudioDict = {
     confirm: string;
     working: string;
   };
+  library: {
+    title: string;
+    active: string;
+    done: string;
+    failed: string;
+    total: string;
+    empty: string;
+    emptyCta: string;
+    open: string;
+    statuses: Record<string, string>;
+  };
   project: {
     back: string;
     queued: string;
@@ -115,7 +126,7 @@ export const studio: Record<Lang, StudioDict> = {
       invalid_request: "Malformed request.",
       topic_too_short: "Write a couple of sentences about the video first.",
       topic_too_long: "The description is too long — keep it under 500 characters.",
-      rate_limit_concurrent: "You already have a video generating. Wait for it to finish.",
+      rate_limit_concurrent: "You already have a video in production. Its progress is on the «My videos» page.",
       rate_limit_daily: "Daily limit reached. Try again tomorrow.",
       create_failed: "Could not create the project. Try again.",
       queue_failed: "Could not queue the job. Try again.",
@@ -135,6 +146,17 @@ export const studio: Record<Lang, StudioDict> = {
       toSignIn: "Already have an account? Sign in",
       confirm: "Check your inbox and confirm the address, then sign in.",
       working: "…",
+    },
+    library: {
+      title: "My videos",
+      active: "In production",
+      done: "Ready",
+      failed: "Failed",
+      total: "Total",
+      empty: "Nothing here yet.",
+      emptyCta: "Create your first video",
+      open: "Open",
+      statuses: { queued: "Queued", generating: "Producing", done: "Ready", failed: "Failed" },
     },
     project: {
       back: "New video",
@@ -218,7 +240,7 @@ export const studio: Record<Lang, StudioDict> = {
       invalid_request: "Некорректный запрос.",
       topic_too_short: "Сначала напишите пару предложений о ролике.",
       topic_too_long: "Описание слишком длинное — уложитесь в 500 символов.",
-      rate_limit_concurrent: "У вас уже генерируется видео. Дождитесь завершения.",
+      rate_limit_concurrent: "У вас уже собирается ролик. Его состояние видно на странице «Мои видео».",
       rate_limit_daily: "Суточный лимит исчерпан. Попробуйте завтра.",
       create_failed: "Не удалось создать проект. Попробуйте ещё раз.",
       queue_failed: "Не удалось поставить задачу в очередь. Попробуйте ещё раз.",
@@ -238,6 +260,17 @@ export const studio: Record<Lang, StudioDict> = {
       toSignIn: "Уже есть аккаунт? Войти",
       confirm: "Проверьте почту, подтвердите адрес и войдите.",
       working: "…",
+    },
+    library: {
+      title: "Мои видео",
+      active: "В работе",
+      done: "Готово",
+      failed: "Не вышло",
+      total: "Всего",
+      empty: "Пока пусто.",
+      emptyCta: "Создать первый ролик",
+      open: "Открыть",
+      statuses: { queued: "В очереди", generating: "Собирается", done: "Готово", failed: "Ошибка" },
     },
     project: {
       back: "Новое видео",
@@ -321,7 +354,7 @@ export const studio: Record<Lang, StudioDict> = {
       invalid_request: "Қате сұраныс.",
       topic_too_short: "Алдымен ролик туралы бірер сөйлем жазыңыз.",
       topic_too_long: "Сипаттама тым ұзын — 500 таңбаға сыйдырыңыз.",
-      rate_limit_concurrent: "Сізде бейне жасалып жатыр. Аяқталуын күтіңіз.",
+      rate_limit_concurrent: "Сізде бейне жасалып жатыр. Оның күйі «Менің бейнелерім» бетінде көрінеді.",
       rate_limit_daily: "Тәуліктік шек таусылды. Ертең қайталаңыз.",
       create_failed: "Жобаны жасау мүмкін болмады. Қайталап көріңіз.",
       queue_failed: "Тапсырманы кезекке қою мүмкін болмады. Қайталап көріңіз.",
@@ -341,6 +374,17 @@ export const studio: Record<Lang, StudioDict> = {
       toSignIn: "Аккаунт бар ма? Кіру",
       confirm: "Поштаңызды тексеріп, мекенжайды растаңыз да, кіріңіз.",
       working: "…",
+    },
+    library: {
+      title: "Менің бейнелерім",
+      active: "Жұмыста",
+      done: "Дайын",
+      failed: "Шықпады",
+      total: "Барлығы",
+      empty: "Әзірге бос.",
+      emptyCta: "Алғашқы роликті жасау",
+      open: "Ашу",
+      statuses: { queued: "Кезекте", generating: "Жиналуда", done: "Дайын", failed: "Қате" },
     },
     project: {
       back: "Жаңа бейне",
