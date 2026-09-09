@@ -1,9 +1,9 @@
 import { notFound } from "next/navigation";
-import { Home } from "../components/Home";
-import { isLang } from "../lib/i18n";
+import { PricingPage } from "../../components/PricingPage";
+import { isLang } from "../../lib/i18n";
 
 export default async function Page({ params }: { params: Promise<{ lang: string }> }) {
   const { lang } = await params;
   if (!isLang(lang)) notFound();
-  return <Home lang={lang} />;
+  return <PricingPage lang={lang} />;
 }

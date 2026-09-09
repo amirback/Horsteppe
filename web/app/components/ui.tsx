@@ -1,19 +1,40 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { motion } from "motion/react";
 import { MARK_PATHS } from "./mark-paths";
 
 /* ------------------------------------------------------------------ ЛОГОТИП */
 
-export function Mark({ className = "" }: { className?: string }) {
+/**
+ * Фирменный знак. При `animate` грива собирается прядь за прядью, голова
+ * появляется следом — это единственная анимация, которая играет при первой
+ * загрузке страницы, поэтому она задаёт тон всему остальному.
+ */
+export function Mark({ className = "", animate = false }: { className?: string; animate?: boolean }) {
+  const strands = [...MARK_PATHS.ears, MARK_PATHS.mane];
+  const draw = {
+    hidden: { opacity: 0, x: -6 },
+    shown: (i: number) => ({
+      opacity: 1,
+      x: 0,
+      transition: { duration: 0.7, delay: 0.08 * i, ease: [0.16, 1, 0.3, 1] as const },
+    }),
+  };
+
   return (
     <svg viewBox="0 0 100 100" fill="none" className={className} aria-hidden="true">
-      <g fill="currentColor">
-        <path d={MARK_PATHS.mane} />
-        {MARK_PATHS.ears.map((d) => (
-          <path key={d} d={d} />
+      <motion.g
+        fill="currentColor"
+        initial={animate ? "hidden" : false}
+        animate={animate ? "shown" : undefined}
+      >
+        {strands.map((d, i) => (
+          <motion.path key={d} d={d} custom={i} variants={animate ? draw : undefined} />
         ))}
-        <path d={MARK_PATHS.head} />
-        <path d={MARK_PATHS.leaf} />
-      </g>
+        <motion.path d={MARK_PATHS.head} custom={strands.length} variants={animate ? draw : undefined} />
+        <motion.path d={MARK_PATHS.leaf} custom={strands.length + 1} variants={animate ? draw : undefined} />
+      </motion.g>
       <path
         d={MARK_PATHS.stem}
         fill="none"
@@ -37,11 +58,11 @@ export function Mark({ className = "" }: { className?: string }) {
   );
 }
 
-export function Logo({ className = "" }: { className?: string }) {
+export function Logo({ className = "", animate = false }: { className?: string; animate?: boolean }) {
   return (
-    <span className={`inline-flex items-center gap-2.5 text-ink ${className}`}>
-      <Mark className="h-14 w-14 shrink-0" />
-      <span className="font-display text-[27px] font-bold tracking-[-0.022em] md:text-[32px]">
+    <span className={`inline-flex items-center gap-2 text-ink sm:gap-2.5 ${className}`}>
+      <Mark className="h-9 w-9 shrink-0 sm:h-11 sm:w-11" animate={animate} />
+      <span className="font-display text-[20px] font-bold tracking-[-0.022em] sm:text-[24px]">
         Horsteppe
       </span>
     </span>
