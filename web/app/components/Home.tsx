@@ -14,7 +14,7 @@ import { motion, Words, Reveal, Stagger, StaggerItem } from "./motion";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
-export function Home({ lang }: { lang: Lang }) {
+export function Home({ lang, email }: { lang: Lang; email: string | null }) {
   const t = content[lang];
 
   const heroRef = useRef<HTMLElement>(null);
@@ -27,7 +27,7 @@ export function Home({ lang }: { lang: Lang }) {
   return (
     <>
       <Ambience />
-      <Nav lang={lang} overlay />
+      <Nav lang={lang} overlay email={email} />
 
       <header id="top" ref={heroRef} className="relative isolate">
         <Mesh />

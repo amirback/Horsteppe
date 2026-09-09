@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Lang } from "../../lib/i18n";
 import { studio } from "../../lib/studio-content";
 import { Logo } from "../../components/ui";
+import { Ambience } from "../../components/Ambience";
 
 /** Вход и регистрация. Аккаунт нужен, чтобы лимиты защищали бюджет генерации. */
 export function LoginForm({ lang }: { lang: Lang }) {
@@ -57,7 +58,8 @@ export function LoginForm({ lang }: { lang: Lang }) {
   }
 
   return (
-    <div className="min-h-screen bg-paper">
+    <div className="min-h-screen">
+      <Ambience />
       <header className="border-b border-ink/10">
         <div className="container-x flex h-24 items-center md:h-28">
           <Link href={`/${lang}`} aria-label="Horsteppe">

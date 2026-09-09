@@ -4,8 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Lang } from "../../../lib/i18n";
 import { studio } from "../../../lib/studio-content";
-import { Logo, ArrowIcon, CheckIcon } from "../../../components/ui";
+import { ArrowIcon, CheckIcon } from "../../../components/ui";
 import { motion } from "../../../components/motion";
+import { Nav } from "../../../components/Nav";
+import { Ambience } from "../../../components/Ambience";
+import { Footer } from "../../../components/Footer";
 
 type Scene = {
   order_index: number;
@@ -38,7 +41,15 @@ const POLL_MS = 3000;
  * показывать выдуманный прогресс. Опрос прекращается, как только состояние
  * стало окончательным.
  */
-export function ProjectStatus({ lang, projectId }: { lang: Lang; projectId: string }) {
+export function ProjectStatus({
+  lang,
+  projectId,
+  email,
+}: {
+  lang: Lang;
+  projectId: string;
+  email: string | null;
+}) {
   const s = studio[lang];
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -84,22 +95,11 @@ export function ProjectStatus({ lang, projectId }: { lang: Lang; projectId: stri
   const failed = project?.status === "failed";
 
   return (
-    <div className="min-h-screen bg-paper">
-      <header className="border-b border-ink/10">
-        <div className="container-x flex h-24 items-center justify-between md:h-28">
-          <Link href={`/${lang}`} aria-label="Horsteppe">
-            <Logo />
-          </Link>
-          <Link
-            href={`/${lang}`}
-            className="nav-link inline-flex items-center gap-2 rounded-full border-[1.5px] border-ink/25 px-5 py-2.5 text-ink-soft transition hover:border-ink hover:text-ink"
-          >
-            {s.project.back}
-          </Link>
-        </div>
-      </header>
+    <>
+      <Ambience />
+      <Nav lang={lang} email={email} />
 
-      <main className="container-x py-12 md:py-16">
+      <main className="container-x min-h-[70svh] pb-16 pt-28 md:pb-20 md:pt-36">
         {error && !project ? (
           <p role="alert" className="rounded-2xl border border-ember/40 bg-white/60 px-5 py-4 text-[14.5px] text-ember">
             {error}
@@ -173,7 +173,9 @@ export function ProjectStatus({ lang, projectId }: { lang: Lang; projectId: stri
           <div className="h-40 animate-pulse rounded-2xl bg-ink/5" />
         ) : null}
       </main>
-    </div>
+
+      <Footer lang={lang} />
+    </>
   );
 }
 

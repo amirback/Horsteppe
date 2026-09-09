@@ -6,6 +6,7 @@ import { content } from "../lib/content";
 import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 import { Logo } from "./ui";
 import { Magnetic, motion } from "./motion";
+import { UserMenu } from "./UserMenu";
 
 export function rememberLang(lang: Lang) {
   try {
@@ -20,7 +21,16 @@ export function rememberLang(lang: Lang) {
  * на бумажном. Пунктов всего два: продукт и тарифы. Больше в SaaS не нужно,
  * а лишние ссылки уводят от единственного действия — создать видео.
  */
-export function Nav({ lang, overlay = false }: { lang: Lang; overlay?: boolean }) {
+export function Nav({
+  lang,
+  overlay = false,
+  email = null,
+}: {
+  lang: Lang;
+  overlay?: boolean;
+  /** Почта вошедшего пользователя. null — показываем кнопку входа. */
+  email?: string | null;
+}) {
   const t = content[lang];
   const [open, setOpen] = useState(false);
   const [solid, setSolid] = useState(!overlay);
@@ -59,12 +69,14 @@ export function Nav({ lang, overlay = false }: { lang: Lang; overlay?: boolean }
         </nav>
 
         <div className="flex items-center gap-2">
-          <Link
-            href={`/${lang}/login`}
-            className="nav-link hidden text-ink-soft/75 transition hover:text-ink sm:block"
-          >
-            {t.nav.signIn}
-          </Link>
+          {email ? null : (
+            <Link
+              href={`/${lang}/login`}
+              className="nav-link hidden text-ink-soft/75 transition hover:text-ink sm:block"
+            >
+              {t.nav.signIn}
+            </Link>
+          )}
           <Magnetic strength={0.14} className="hidden sm:inline-block">
             <Link
               href={`/${lang}#top`}
@@ -73,6 +85,8 @@ export function Nav({ lang, overlay = false }: { lang: Lang; overlay?: boolean }
               {t.nav.cta}
             </Link>
           </Magnetic>
+
+          {email ? <UserMenu lang={lang} email={email} /> : null}
 
           <button
             type="button"
@@ -110,13 +124,17 @@ export function Nav({ lang, overlay = false }: { lang: Lang; overlay?: boolean }
                 {l.label}
               </Link>
             ))}
-            <Link
-              href={`/${lang}/login`}
-              onClick={() => setOpen(false)}
-              className="nav-link rounded-xl px-3 py-3 text-ink-soft/80 transition hover:bg-ink/5"
-            >
-              {t.nav.signIn}
-            </Link>
+            {email ? (
+              <span className="nav-link truncate px-3 py-3 text-ink-soft/60">{email}</span>
+            ) : (
+              <Link
+                href={`/${lang}/login`}
+                onClick={() => setOpen(false)}
+                className="nav-link rounded-xl px-3 py-3 text-ink-soft/80 transition hover:bg-ink/5"
+              >
+                {t.nav.signIn}
+              </Link>
+            )}
             <Link
               href={`/${lang}#top`}
               onClick={() => setOpen(false)}

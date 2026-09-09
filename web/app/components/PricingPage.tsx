@@ -9,14 +9,14 @@ import { Footer } from "./Footer";
 import { CheckIcon } from "./ui";
 import { Reveal, Stagger, StaggerItem } from "./motion";
 
-export function PricingPage({ lang }: { lang: Lang }) {
+export function PricingPage({ lang, email }: { lang: Lang; email: string | null }) {
   const t = content[lang];
   const p = t.pricing;
 
   return (
     <>
       <Ambience />
-      <Nav lang={lang} />
+      <Nav lang={lang} email={email} />
 
       <main className="container-x pb-16 pt-28 md:pb-24 md:pt-36">
         <Reveal>

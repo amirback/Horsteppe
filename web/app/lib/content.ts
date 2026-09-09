@@ -5,7 +5,7 @@ export type { Lang };
 export const CONTACT_EMAIL = "Horsteppe@gmail.com";
 
 export type Dict = {
-  nav: { product: string; pricing: string; signIn: string; cta: string };
+  nav: { product: string; pricing: string; signIn: string; signOut: string; account: string; cta: string };
   hero: { title: string; sub: string; scroll: string };
   steps: { n: string; title: string; text: string }[];
   values: { title: string; text: string }[];
@@ -23,7 +23,7 @@ export type Dict = {
 
 export const content: Record<Lang, Dict> = {
   en: {
-    nav: { product: "Product", pricing: "Pricing", signIn: "Sign in", cta: "Create video" },
+    nav: { product: "Product", pricing: "Pricing", signIn: "Sign in", signOut: "Sign out", account: "Signed in as", cta: "Create video" },
     hero: {
       title: "Orchestrating the Steppe.",
       sub: "Describe your video. Horsteppe writes it, shoots it, voices it and edits it.",
@@ -92,7 +92,7 @@ export const content: Record<Lang, Dict> = {
   },
 
   ru: {
-    nav: { product: "Продукт", pricing: "Тарифы", signIn: "Войти", cta: "Создать видео" },
+    nav: { product: "Продукт", pricing: "Тарифы", signIn: "Войти", signOut: "Выйти", account: "Вы вошли как", cta: "Создать видео" },
     hero: {
       title: "Оркестровка степи.",
       sub: "Опишите ролик. Horsteppe напишет сценарий, снимет, озвучит и смонтирует.",
@@ -161,7 +161,7 @@ export const content: Record<Lang, Dict> = {
   },
 
   kk: {
-    nav: { product: "Өнім", pricing: "Тарифтер", signIn: "Кіру", cta: "Бейне жасау" },
+    nav: { product: "Өнім", pricing: "Тарифтер", signIn: "Кіру", signOut: "Шығу", account: "Сіз кірдіңіз:", cta: "Бейне жасау" },
     hero: {
       title: "Дала оркестрі.",
       sub: "Роликті сипаттаңыз. Horsteppe сценарий жазып, түсіріп, дауыстап, монтаждайды.",
