@@ -4,6 +4,7 @@ import Link from "next/link";
 import { content } from "../lib/content";
 import type { Lang } from "../lib/i18n";
 import { Nav } from "./Nav";
+import { Ambience } from "./Ambience";
 import { Footer } from "./Footer";
 import { CheckIcon } from "./ui";
 import { Reveal, Stagger, StaggerItem } from "./motion";
@@ -14,6 +15,7 @@ export function PricingPage({ lang }: { lang: Lang }) {
 
   return (
     <>
+      <Ambience />
       <Nav lang={lang} />
 
       <main className="container-x pb-16 pt-28 md:pb-24 md:pt-36">

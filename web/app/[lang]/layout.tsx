@@ -55,7 +55,9 @@ export async function generateMetadata({
 
   return {
     metadataBase: new URL(SITE_URL),
-    title: { default: seo.title, template: "%s · Horsteppe" },
+    // На вкладке — только имя бренда: описание живёт в meta description,
+    // а длинный заголовок в узкой вкладке всё равно обрезается.
+    title: { default: "Horsteppe", template: "%s · Horsteppe" },
     description: seo.description,
     alternates: {
       canonical: `${SITE_URL}/${raw}`,

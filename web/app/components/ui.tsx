@@ -7,28 +7,19 @@ import { motion } from "motion/react";
 /* ------------------------------------------------------------------ ЛОГОТИП */
 
 /**
- * Фирменный знак — файл, присланный основателем, а не перерисовка.
- *
- * Фон у исходника зашит в картинку и чисто не отделяется: местами он такой же
- * тёмный, как контур рисунка. Поэтому знак используется значком со скруглением:
- * графика сохраняется без искажений, а зелёный фон совпадает с брендом.
+ * Фирменный знак — файл основателя с прозрачным фоном.
+ * `object-contain` вместо `cover`: пропорции у знака не квадратные,
+ * и обрезка съела бы кончик гривы.
  */
 export function Mark({ className = "", animate = false }: { className?: string; animate?: boolean }) {
   return (
     <motion.span
-      className={`relative block overflow-hidden rounded-[26%] ${className}`}
-      initial={animate ? { opacity: 0, scale: 0.86, rotate: -6 } : false}
+      className={`relative block ${className}`}
+      initial={animate ? { opacity: 0, scale: 0.8, rotate: -8 } : false}
       animate={animate ? { opacity: 1, scale: 1, rotate: 0 } : undefined}
-      transition={{ duration: 0.85, ease: [0.16, 1, 0.3, 1] }}
+      transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
     >
-      <Image
-        src="/logo.png"
-        alt=""
-        fill
-        sizes="48px"
-        priority
-        className="object-cover"
-      />
+      <Image src="/logo.png" alt="" fill sizes="56px" priority className="object-contain" />
     </motion.span>
   );
 }
@@ -36,7 +27,7 @@ export function Mark({ className = "", animate = false }: { className?: string; 
 export function Logo({ className = "", animate = false }: { className?: string; animate?: boolean }) {
   return (
     <span className={`inline-flex items-center gap-2 text-ink sm:gap-2.5 ${className}`}>
-      <Mark className="h-9 w-9 shrink-0 sm:h-11 sm:w-11" animate={animate} />
+      <Mark className="h-10 w-11 shrink-0 sm:h-12 sm:w-14" animate={animate} />
       <span className="font-display text-[20px] font-bold tracking-[-0.022em] sm:text-[24px]">
         Horsteppe
       </span>

@@ -5,7 +5,10 @@
  */
 export function Mesh({ className = "" }: { className?: string }) {
   return (
-    <div className={`absolute inset-0 overflow-hidden ${className}`} aria-hidden="true">
+    <div
+      className={`absolute inset-0 overflow-hidden [mask-image:linear-gradient(to_bottom,black_55%,rgba(0,0,0,0.55)_78%,transparent_100%)] ${className}`}
+      aria-hidden="true"
+    >
       <svg
         viewBox="0 0 1440 900"
         preserveAspectRatio="xMidYMid slice"

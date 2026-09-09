@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useScroll, useSpring, useTransform, useMotionValue } from "motion/react";
+import { useScroll, useSpring, useTransform, useMotionValue, type MotionValue } from "motion/react";
 import { content } from "../lib/content";
 import type { Lang } from "../lib/i18n";
 import { Mesh } from "./Mesh";
+import { Ambience } from "./Ambience";
 import { Generator } from "./Generator";
 import { Nav } from "./Nav";
 import { Footer } from "./Footer";
@@ -16,15 +17,26 @@ const EASE = [0.16, 1, 0.3, 1] as const;
 export function Home({ lang }: { lang: Lang }) {
   const t = content[lang];
 
+  const heroRef = useRef<HTMLElement>(null);
+  const { scrollYProgress } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
+  // Содержимое обложки уходит вверх медленнее фона и растворяется — из-за
+  // этого переход к странице читается как продолжение, а не как новый экран.
+  const heroY = useTransform(scrollYProgress, [0, 1], [0, 90]);
+  const heroFade = useTransform(scrollYProgress, [0, 0.75], [1, 0]);
+
   return (
     <>
+      <Ambience />
       <Nav lang={lang} overlay />
 
-      <header id="top" className="relative isolate">
+      <header id="top" ref={heroRef} className="relative isolate">
         <Mesh />
         <PointerLight />
 
-        <div className="container-x relative flex min-h-[100svh] flex-col items-center justify-center px-5 py-28 text-center sm:py-32">
+        <motion.div
+          style={{ y: heroY, opacity: heroFade }}
+          className="container-x relative flex min-h-[100svh] flex-col items-center justify-center px-5 py-28 text-center sm:py-32"
+        >
           <h1 className="font-display text-balance font-bold leading-[1.04] tracking-[-0.035em] text-ink [font-size:clamp(30px,6.4vw,62px)]">
             <Words text={t.hero.title} delay={0.1} />
           </h1>
@@ -64,7 +76,7 @@ export function Home({ lang }: { lang: Lang }) {
               </svg>
             </motion.span>
           </motion.a>
-        </div>
+        </motion.div>
       </header>
 
       <main>
@@ -153,9 +165,7 @@ function Steps({ lang }: { lang: Lang }) {
               viewport={{ once: true, margin: "-15% 0px" }}
               transition={{ duration: 0.7, delay: i * 0.12, ease: EASE }}
             >
-              <span className="absolute left-0 top-0 flex h-[31px] w-[31px] items-center justify-center rounded-full border border-ink/15 bg-paper font-display text-[11px] font-bold tracking-[0.06em] text-sage">
-                {step.n}
-              </span>
+              <StepMark n={step.n} index={i} total={t.steps.length} progress={grow} />
               <h3 className="font-display text-[17px] font-bold tracking-[-0.01em] text-ink">{step.title}</h3>
               <p className="mt-2 text-[14px] leading-relaxed text-ink-soft/85">{step.text}</p>
             </motion.li>
@@ -163,6 +173,39 @@ function Steps({ lang }: { lang: Lang }) {
         </ol>
       </div>
     </section>
+  );
+}
+
+/** Кружок шага: заливается, когда линия прогресса до него доходит. */
+function StepMark({
+  n,
+  index,
+  total,
+  progress,
+}: {
+  n: string;
+  index: number;
+  total: number;
+  progress: MotionValue<number>;
+}) {
+  const at = total > 1 ? index / (total - 1) : 0;
+  const fill = useTransform(progress, [Math.max(at - 0.12, 0), at], [0, 1]);
+  const color = useTransform(fill, [0, 1], ['#6d8c3e', '#f7f6e9']);
+
+  return (
+    <span className="absolute left-0 top-0 flex h-[31px] w-[31px] items-center justify-center">
+      <motion.span
+        style={{ opacity: fill, scale: fill }}
+        className="absolute inset-0 rounded-full bg-sage"
+      />
+      <span className="absolute inset-0 rounded-full border border-ink/15" />
+      <motion.span
+        style={{ color }}
+        className="font-display relative text-[11px] font-bold tracking-[0.06em]"
+      >
+        {n}
+      </motion.span>
+    </span>
   );
 }
 

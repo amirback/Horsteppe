@@ -91,6 +91,24 @@
     }
   }
 
+  /* Фоновые пятна дышат в разном ритме, поэтому картинка не повторяется. */
+  @keyframes floatA {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    50%      { transform: translate3d(4%, -6%, 0) scale(1.12); }
+  }
+  @keyframes floatB {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1.08); }
+    50%      { transform: translate3d(-6%, 5%, 0) scale(1); }
+  }
+  @keyframes floatC {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    50%      { transform: translate3d(5%, 7%, 0) scale(1.15); }
+  }
+
+  .float-a { animation: floatA 34s ease-in-out infinite; }
+  .float-b { animation: floatB 44s ease-in-out infinite; }
+  .float-c { animation: floatC 38s ease-in-out infinite; }
+
   @keyframes meshDrift {
     0%,
     100% {
