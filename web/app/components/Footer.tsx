@@ -3,6 +3,8 @@
 import { content, CONTACT_EMAIL } from "../lib/content";
 import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 import { rememberLang } from "./Nav";
+import Link from "next/link";
+import { legal } from "../lib/legal-content";
 
 export function Footer({ lang }: { lang: Lang }) {
   const t = content[lang];
@@ -46,7 +48,21 @@ export function Footer({ lang }: { lang: Lang }) {
         </div>
       </div>
 
-      <div className="container-x mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-ink/10 pt-5 text-[12px] text-ink-soft/55">
+      {/* Юридические документы живут отдельными страницами: в подвале от них
+          остаётся один ряд ссылок, а сам сайт они не раздувают. */}
+      <div className="container-x mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-ink/10 pt-5 text-[12.5px]">
+        {(["help", "privacy", "terms", "cookies"] as const).map((key) => (
+          <Link
+            key={key}
+            href={`/${lang}/${key}`}
+            className="text-ink-soft/65 transition hover:text-ink"
+          >
+            {legal[lang].nav[key]}
+          </Link>
+        ))}
+      </div>
+
+      <div className="container-x mt-5 flex flex-wrap items-center justify-between gap-3 text-[12px] text-ink-soft/55">
         <span>© {new Date().getFullYear()} Horsteppe. {t.footer.rights}</span>
         <span>{t.footer.orda}</span>
       </div>
