@@ -82,6 +82,28 @@ class Db:
     def update_scene(self, scene_id: str, **fields: Any) -> None:
         self.client.table("scenes").update(fields).eq("id", scene_id).execute()
 
+    # ---------- shots ----------
+    # Кадр — единица монтажа внутри сцены. Доступ устроен так же, как у сцен:
+    # готовый кадр при повторе пропускается, поэтому провайдерам не платят
+    # дважды за то, что уже собрано.
+
+    def get_shots(self, project_id: str) -> list[dict[str, Any]]:
+        res = (
+            self.client.table("shots")
+            .select("*")
+            .eq("project_id", project_id)
+            .order("order_index")
+            .execute()
+        )
+        return res.data or []
+
+    def insert_shots(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        res = self.client.table("shots").insert(rows).execute()
+        return res.data
+
+    def update_shot(self, shot_id: str, **fields: Any) -> None:
+        self.client.table("shots").update(fields).eq("id", shot_id).execute()
+
     def insert_render(self, project_id: str, url: str, duration_sec: float) -> None:
         self.client.table("renders").insert(
             {"project_id": project_id, "final_video_url": url, "duration_sec": round(duration_sec, 3)}
