@@ -311,3 +311,19 @@ def test_free_provider_asks_for_the_size_it_actually_returns(monkeypatch, cfg, t
     assert (params["width"], params["height"]) == (576, 1024)
     # Кадр обязан остаться вертикальным 9:16, иначе кадрирование срежет смысл.
     assert params["width"] * 16 == params["height"] * 9
+
+
+def test_seed_never_exceeds_the_provider_limit(monkeypatch, cfg, tmp_path):
+    """Половина сцен убивала проект из-за одного лишнего бита.
+
+    Провайдер принимает seed не больше 2147483647, а восемь знаков sha256
+    дают число до 4294967295. Ответ при превышении — «500 Internal Server
+    Error», настоящая причина спрятана в теле: fieldErrors.seed = "Too big".
+    Так и погиб проект «2 students businessmen»: у четвёртой сцены seed
+    оказался 2209067041.
+    """
+    for index in range(40):
+        step, state = _patch(monkeypatch, [FakeResponse(content=b"s" * 4000)])
+        step.generate_image(cfg, f"scene number {index} in the steppe", tmp_path / f"{index}.png", index=index)
+        seed = state["calls"][0][1]["seed"]
+        assert 0 <= seed <= 2147483647, f"сцена {index}: seed {seed} вне допустимого"

@@ -4,9 +4,9 @@
 
 * `together` — бесплатный тариф FLUX.1-schnell, нужен только ключ. Отвечает
   предсказуемо, в том числе из дата-центра.
-* `pollinations` — бесплатно и вовсе без аккаунта, но ненадёжен: на боевом
-  размере кадра один и тот же запрос возвращался то за три секунды, то за
-  тринадцать минут, а из дата-центра отдавал 500. Годится последним запасным.
+* `pollinations` — бесплатно и вовсе без аккаунта. Долго считался ненадёжным:
+  проекты гибли на случайной сцене с «HTTP 500». Виноват был не он, а мы —
+  seed выходил за допустимую границу, см. комментарий в `_via_pollinations`.
 * `fal` — платный, качество выше.
 
 Провайдеры перечисляются в IMAGE_PROVIDER через запятую и пробуются по
@@ -67,6 +67,8 @@ TOGETHER_STEPS = 4
 POLLINATIONS_BACKOFF_SEC = float(os.environ.get("POLLINATIONS_BACKOFF_SEC", "5"))
 # Меньше килобайта — это не кадр, а страница с ошибкой.
 MIN_IMAGE_BYTES = 1024
+# Потолок seed у провайдеров кадров — знаковое 32-битное число.
+MAX_SEED = 2**31
 
 
 class ImageError(Exception):
@@ -104,7 +106,15 @@ def _via_pollinations(cfg: Config, prompt: str, out_path: Path, index: int) -> f
     """
     # Seed выводится из промпта: один и тот же кадр воспроизводится при повторе,
     # а разные сцены не получают одинаковую картинку.
-    seed = int(hashlib.sha256(f"{index}:{prompt}".encode()).hexdigest()[:8], 16)
+    #
+    # Остаток по 2^31 — не косметика. Сервис принимает seed не больше
+    # 2147483647, а восемь знаков хеша дают число до 4294967295. Каждая вторая
+    # сцена в среднем выпадала за границу, и провайдер отвечал «500 Internal
+    # Server Error», пряча настоящую причину в теле ответа:
+    # fieldErrors.seed = "Too big: expected number to be <=2147483647".
+    # Из-за этого шанс собрать ролик из четырёх сцен был примерно один к
+    # шестнадцати, и выглядело это как случайные сбои провайдера.
+    seed = int(hashlib.sha256(f"{index}:{prompt}".encode()).hexdigest()[:8], 16) % MAX_SEED
     url = POLLINATIONS_URL + urllib.parse.quote(prompt, safe="")
     params = {
         "width": POLLINATIONS_WIDTH,
@@ -159,7 +169,7 @@ def _via_together(cfg: Config, prompt: str, out_path: Path, index: int) -> float
     if not cfg.together_api_key:
         raise ImageError("TOGETHER_API_KEY не задан")
 
-    seed = int(hashlib.sha256(f"{index}:{prompt}".encode()).hexdigest()[:8], 16) % (2**31)
+    seed = int(hashlib.sha256(f"{index}:{prompt}".encode()).hexdigest()[:8], 16) % MAX_SEED
     payload = {
         "model": cfg.together_image_model,
         "prompt": prompt,
