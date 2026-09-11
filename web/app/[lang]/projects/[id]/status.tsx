@@ -89,6 +89,37 @@ export function ProjectStatus({
     };
   }, [load]);
 
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  /** Ставит упавший проект обратно в очередь и возобновляет опрос состояния. */
+  const retry = useCallback(async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/retry`, { method: "POST" });
+      if (!res.ok) {
+        const body: { error?: string } = await res.json().catch(() => ({}));
+        setRetryError(s.errors[body.error ?? "unknown"] ?? s.errors.unknown);
+        return;
+      }
+      const body = await load();
+      // Опрос сам себя не перезапустит: он остановился, когда проект упал.
+      if (body && body.project.status !== "done" && body.project.status !== "failed") {
+        timer.current = setTimeout(async function tick() {
+          const next = await load();
+          const status = next?.project.status;
+          if (status === "done" || status === "failed") return;
+          timer.current = setTimeout(tick, POLL_MS);
+        }, POLL_MS);
+      }
+    } catch {
+      setRetryError(s.errors.network);
+    } finally {
+      setRetrying(false);
+    }
+  }, [projectId, s, load]);
+
   const project = data?.project;
   const render = data?.render;
   const done = project?.status === "done" && render;
@@ -156,14 +187,24 @@ export function ProjectStatus({
             ) : failed ? (
               <div className="mt-8 max-w-2xl rounded-2xl border border-ember/40 bg-white/60 px-5 py-4">
                 <p className="text-[14.5px] leading-relaxed text-ember">
-                  {project.error_message ?? s.errors.unknown}
+                  {retryError ?? project.error_message ?? s.errors.unknown}
                 </p>
-                <Link
-                  href={`/${lang}`}
-                  className="nav-link mt-4 inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-cream transition hover:bg-forest"
-                >
-                  {s.project.retry}
-                </Link>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={retry}
+                    disabled={retrying}
+                    className="nav-link inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-cream transition hover:bg-forest disabled:opacity-70"
+                  >
+                    {retrying ? s.project.queued : s.project.retry}
+                  </button>
+                  <Link
+                    href={`/${lang}`}
+                    className="nav-link inline-flex items-center gap-2 rounded-full border-[1.5px] border-ink/25 px-5 py-3 text-ink-soft transition hover:border-ink hover:text-ink"
+                  >
+                    {s.project.again}
+                  </Link>
+                </div>
               </div>
             ) : (
               <Progress detail={project.status_detail} scenes={data!.scenes} stages={s.project.stages} scenesLabel={s.project.scenes} />

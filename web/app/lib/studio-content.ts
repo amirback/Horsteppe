@@ -138,6 +138,7 @@ export const studio: Record<Lang, StudioDict> = {
       email_taken: "This email is already registered — sign in instead.",
       signup_failed: "Could not create the account. Try again.",
       bad_credentials: "Wrong email or password.",
+      retry_not_failed: "This project is not in a failed state — nothing to retry.",
       unknown: "Something went wrong.",
     },
     auth: {
@@ -257,6 +258,7 @@ export const studio: Record<Lang, StudioDict> = {
       email_taken: "Эта почта уже зарегистрирована — войдите.",
       signup_failed: "Не удалось создать аккаунт. Попробуйте ещё раз.",
       bad_credentials: "Неверная почта или пароль.",
+      retry_not_failed: "Этот проект не в состоянии ошибки — повторять нечего.",
       unknown: "Что-то пошло не так.",
     },
     auth: {
@@ -376,6 +378,7 @@ export const studio: Record<Lang, StudioDict> = {
       email_taken: "Бұл пошта тіркелген — кіріңіз.",
       signup_failed: "Аккаунт жасау мүмкін болмады. Қайталап көріңіз.",
       bad_credentials: "Пошта немесе құпиясөз қате.",
+      retry_not_failed: "Бұл жоба қате күйінде емес — қайталайтын ештеңе жоқ.",
       unknown: "Бірдеңе дұрыс болмады.",
     },
     auth: {
