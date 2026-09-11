@@ -39,11 +39,19 @@ log = logging.getLogger("worker.image")
 TIMEOUT_SEC = float(os.environ.get("FAL_IMAGE_TIMEOUT_SEC", "180"))
 
 POLLINATIONS_URL = "https://image.pollinations.ai/prompt/"
-# Бесплатный сервис отвечает медленнее платного и иногда даёт 5xx под нагрузкой.
-# Минута — не «сколько он может думать», а «сколько мы готовы ждать»: замер на
-# боевом размере кадра дал ответы в 3 секунды и в 13 минут на одном и том же
-# запросе. Зависшая попытка должна умереть и уступить место следующей.
-POLLINATIONS_TIMEOUT_SEC = float(os.environ.get("POLLINATIONS_TIMEOUT_SEC", "60"))
+# Полторы минуты — не «сколько он может думать», а «сколько мы готовы ждать».
+# Обычный ответ приходит за 45 секунд; зависшая попытка должна умереть и
+# уступить место следующей, а не съесть задание целиком.
+POLLINATIONS_TIMEOUT_SEC = float(os.environ.get("POLLINATIONS_TIMEOUT_SEC", "90"))
+# Размер, который сервис отдаёт на самом деле. Проверено: на любой запрос —
+# 576, 720, 864, 1080 по ширине — возвращается ровно 576x1024. Но запрос
+# 1080x1920 уводит его в медленную ветку: три попытки подряд дали 203 секунды
+# без ответа, 3 секунды и 780 секунд без ответа. На 576x1024 — 12 успехов из
+# 12 по 45 секунд. Просим то, что он и так отдаёт; картинка не меняется, а
+# зависания исчезают. Кадр меньше финального — Ken Burns всё равно увеличивает
+# исходник вдвое и кадрирует под нужный формат.
+POLLINATIONS_WIDTH = 576
+POLLINATIONS_HEIGHT = 1024
 POLLINATIONS_ATTEMPTS = 3
 
 TOGETHER_URL = "https://api.together.xyz/v1/images/generations"
@@ -99,8 +107,8 @@ def _via_pollinations(cfg: Config, prompt: str, out_path: Path, index: int) -> f
     seed = int(hashlib.sha256(f"{index}:{prompt}".encode()).hexdigest()[:8], 16)
     url = POLLINATIONS_URL + urllib.parse.quote(prompt, safe="")
     params = {
-        "width": 1080,
-        "height": 1920,
+        "width": POLLINATIONS_WIDTH,
+        "height": POLLINATIONS_HEIGHT,
         "model": cfg.pollinations_model,
         "nologo": "true",
         "seed": seed,

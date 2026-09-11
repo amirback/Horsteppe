@@ -296,3 +296,18 @@ def test_together_key_is_demanded_only_when_it_is_in_the_chain(monkeypatch):
 
     monkeypatch.setenv("IMAGE_PROVIDER", "pollinations")
     assert Config().image_providers == ["pollinations"]
+
+
+def test_free_provider_asks_for_the_size_it_actually_returns(monkeypatch, cfg, tmp_path):
+    """Просить 1080x1920 бессмысленно и вредно.
+
+    Замер: на любой запрошенный размер сервис возвращает 576x1024, но
+    запрос 1080x1920 уводит его в медленную ветку — 203 с без ответа,
+    3 с, 780 с без ответа. На 576x1024 — 12 успехов из 12 по 45 секунд.
+    """
+    step, state = _patch(monkeypatch, [FakeResponse(content=b"q" * 4000)])
+    step.generate_image(cfg, "prompt", tmp_path / "s.png", index=0)
+    _, params = state["calls"][0]
+    assert (params["width"], params["height"]) == (576, 1024)
+    # Кадр обязан остаться вертикальным 9:16, иначе кадрирование срежет смысл.
+    assert params["width"] * 16 == params["height"] * 9
