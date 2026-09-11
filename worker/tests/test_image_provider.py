@@ -14,11 +14,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 class FakeResponse:
-    def __init__(self, status=200, content=b"", content_type="image/jpeg", text=""):
+    def __init__(self, status=200, content=b"", content_type="image/jpeg", text="", payload=None):
         self.status_code = status
         self.content = content
         self.headers = {"content-type": content_type}
         self.text = text
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
 
 
 class FakeClient:
@@ -40,6 +48,10 @@ class FakeClient:
 
     def get(self, url, params=None):
         self._state["calls"].append((url, params))
+        return self._state["responses"].pop(0)
+
+    def post(self, url, headers=None, json=None):
+        self._state["calls"].append((url, {"headers": headers, "json": json}))
         return self._state["responses"].pop(0)
 
 
@@ -182,3 +194,105 @@ def test_chain_reports_every_provider_when_all_fail(monkeypatch, tmp_path):
         image_step.generate_image(Config(), "prompt", tmp_path / "s.png", index=0)
     # В сообщении должны быть обе причины, иначе чинить придётся вслепую.
     assert "pollinations" in str(e.value) and "баланс исчерпан" in str(e.value)
+
+
+# --- Together AI ------------------------------------------------------------
+
+
+@pytest.fixture()
+def together_cfg(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test")
+    monkeypatch.setenv("MVP_SAFE_MODE", "0")
+    monkeypatch.setenv("SCRIPT_MODE", "mock")
+    monkeypatch.setenv("IMAGE_PROVIDER", "together")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test")
+    monkeypatch.setenv("TOGETHER_API_KEY", "test-key")
+    monkeypatch.setenv("POLLINATIONS_BACKOFF_SEC", "0")
+    monkeypatch.delenv("FAL_KEY", raising=False)
+    from config import Config
+
+    return Config()
+
+
+def test_together_saves_base64_image_and_costs_nothing(monkeypatch, together_cfg, tmp_path):
+    import base64
+
+    blob = b"j" * 4000
+    step, state = _patch(
+        monkeypatch,
+        [FakeResponse(payload={"data": [{"b64_json": base64.b64encode(blob).decode()}]})],
+    )
+    out = tmp_path / "scene.png"
+    assert step.generate_image(together_cfg, "a horse in the steppe", out, index=0) == 0.0
+    assert out.read_bytes() == blob
+
+    url, sent = state["calls"][0]
+    assert url == step.TOGETHER_URL
+    assert sent["headers"]["Authorization"] == "Bearer test-key"
+    # Стороны обязаны быть кратны 16 и не выше 1792 — иначе эндпоинт отвечает 400.
+    assert sent["json"]["width"] % 16 == 0 and sent["json"]["height"] % 16 == 0
+    assert max(sent["json"]["width"], sent["json"]["height"]) <= 1792
+
+
+def test_together_follows_a_url_answer(monkeypatch, together_cfg, tmp_path):
+    """Эндпоинт отдаёт то ссылку, то base64 — работать должны оба ответа."""
+    step, _ = _patch(
+        monkeypatch,
+        [
+            FakeResponse(payload={"data": [{"url": "https://cdn.example/img.jpg"}]}),
+            FakeResponse(content=b"u" * 4000),
+        ],
+    )
+    out = tmp_path / "scene.png"
+    step.generate_image(together_cfg, "prompt", out, index=0)
+    assert out.read_bytes() == b"u" * 4000
+
+
+def test_together_retries_rate_limit_then_succeeds(monkeypatch, together_cfg, tmp_path):
+    """429 на бесплатном тарифе — это «подожди», а не «сдавайся»."""
+    import base64
+
+    monkeypatch.setattr("steps.image_step.POLLINATIONS_BACKOFF_SEC", 0)
+    step, state = _patch(
+        monkeypatch,
+        [
+            FakeResponse(status=429),
+            FakeResponse(payload={"data": [{"b64_json": base64.b64encode(b"k" * 4000).decode()}]}),
+        ],
+    )
+    assert step.generate_image(together_cfg, "prompt", tmp_path / "s.png", index=0) == 0.0
+    assert len(state["calls"]) == 2
+
+
+def test_together_without_a_key_is_a_clear_error(monkeypatch, tmp_path):
+    """Пустой ключ должен назвать себя, а не притворяться сетевым сбоем."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test")
+    monkeypatch.setenv("MVP_SAFE_MODE", "1")
+    monkeypatch.setenv("IMAGE_PROVIDER", "together")
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    from config import Config
+    from steps import image_step
+
+    with pytest.raises(image_step.ImageError, match="TOGETHER_API_KEY"):
+        image_step._via_together(Config(), "prompt", tmp_path / "s.png", 0)
+
+
+def test_together_key_is_demanded_only_when_it_is_in_the_chain(monkeypatch):
+    """Ключ обязателен, только если Together реально участвует в работе."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test")
+    monkeypatch.setenv("MVP_SAFE_MODE", "0")
+    monkeypatch.setenv("SCRIPT_MODE", "mock")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test")
+    monkeypatch.setenv("IMAGE_PROVIDER", "together")
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("FAL_KEY", raising=False)
+    from config import Config
+
+    with pytest.raises(RuntimeError, match="TOGETHER_API_KEY"):
+        Config()
+
+    monkeypatch.setenv("IMAGE_PROVIDER", "pollinations")
+    assert Config().image_providers == ["pollinations"]
