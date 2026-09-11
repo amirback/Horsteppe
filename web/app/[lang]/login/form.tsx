@@ -30,22 +30,24 @@ export function LoginForm({ lang }: { lang: Lang }) {
     try {
       const supabase = createClient();
       if (mode === "signup") {
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) {
-          setError(error.message);
+        // Аккаунт создаёт сервер и сразу подтверждает адрес: встроенная почта
+        // Supabase ограничена несколькими письмами в час на весь проект, и на
+        // ней регистрация нового человека попросту не работала.
+        const res = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          setError(errors[body.error ?? "unknown"] ?? errors.unknown);
           return;
         }
-        if (!data.session) {
-          setInfo(s.confirm);
-          setMode("signin");
-          return;
-        }
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) {
-          setError(error.message);
-          return;
-        }
+      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setError(mode === "signup" ? errors.signup_failed : errors.bad_credentials);
+        return;
       }
       const next = search.get("next");
       router.push(next && next.startsWith(`/${lang}`) ? next : `/${lang}`);
