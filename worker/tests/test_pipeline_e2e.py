@@ -62,6 +62,7 @@ class FakeDb:
         self.storage = storage_dir
         self.project = project
         self.scenes: list[dict[str, Any]] = []
+        self.shots: list[dict[str, Any]] = []
         self.progress: list[str] = []
         self.costs: list[tuple[str, str, float]] = []
         self.renders: list[tuple[str, float]] = []
@@ -91,6 +92,22 @@ class FakeDb:
                 scene.update(fields)
                 return
         raise AssertionError(f"сцена {scene_id} не найдена")
+
+    # --- кадры ---
+    def get_shots(self, project_id: str) -> list[dict[str, Any]]:
+        return self.shots
+
+    def insert_shots(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for row in rows:
+            self.shots.append({"id": str(uuid.uuid4()), **row})
+        return self.shots
+
+    def update_shot(self, shot_id: str, **fields: Any) -> None:
+        for shot in self.shots:
+            if shot["id"] == shot_id:
+                shot.update(fields)
+                return
+        raise AssertionError(f"кадр {shot_id} не найден")
 
     # --- побочные записи ---
     def log_cost(self, project_id: str, step: str, provider: str, amount_usd: float, detail: str = "") -> None:
@@ -160,11 +177,39 @@ class PipelineEndToEndTest(unittest.TestCase):
         self.assertAlmostEqual(duration, voiced, places=1)
 
     def test_every_scene_produced_assets(self) -> None:
+        """Озвучка живёт на сцене, картинка — на кадре."""
         self.assertGreaterEqual(len(self.db.scenes), 2)
         for scene in self.db.scenes:
             self.assertTrue(scene.get("audio_url"), f"нет озвучки: сцена {scene['order_index']}")
-            self.assertTrue(scene.get("image_url"), f"нет кадра: сцена {scene['order_index']}")
-            self.assertEqual(scene["status"], "image_done")
+            self.assertEqual(scene["status"], "audio_done")
+
+        self.assertGreaterEqual(len(self.db.shots), 2)
+        for shot in self.db.shots:
+            self.assertTrue(shot.get("image_url"), f"нет картинки: кадр {shot['order_index']}")
+            self.assertEqual(shot["status"], "image_done")
+
+    def test_film_is_cut_into_more_shots_than_scenes(self) -> None:
+        """Главная защита от возврата слайдшоу: кадров больше, чем сцен."""
+        self.assertGreater(len(self.db.shots), len(self.db.scenes))
+
+    def test_shots_stay_in_sync_with_the_voice(self) -> None:
+        """Сумма кадров сцены обязана равняться её озвучке."""
+        for scene in self.db.scenes:
+            planned = sum(
+                float(s["timeline_duration"])
+                for s in self.db.shots
+                if s["scene_id"] == scene["id"]
+            )
+            self.assertAlmostEqual(planned, float(scene["audio_duration_sec"]), places=2)
+
+    def test_local_motion_is_not_passed_off_as_real_video(self) -> None:
+        """Бриф §18: движение по картинке нельзя выдавать за настоящее видео."""
+        for shot in self.db.shots:
+            self.assertEqual(shot["generation_mode"], "image_motion")
+
+    def test_neighbouring_shots_differ_in_camera_move(self) -> None:
+        moves = [s["camera_motion"] for s in self.db.shots]
+        self.assertTrue(all(a != b for a, b in zip(moves, moves[1:])), moves)
 
     def test_nothing_was_paid_for(self) -> None:
         self.assertTrue(self.db.costs, "траты вообще не записывались — учёт сломан")

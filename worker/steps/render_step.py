@@ -27,6 +27,35 @@ log = logging.getLogger("worker.render")
 END_PAD_SEC = 0.5
 
 
+def _scene_shots(scene: dict, measured_duration: float) -> list[dict]:
+    """Кадры сцены, подогнанные под её настоящую озвучку.
+
+    Планировщик считает длительности по значению из базы, а монтаж измеряет
+    mp3 заново. Разница крошечная, но без подгонки она накапливается и уводит
+    картинку от голоса — ровно тот дефект, что уже стоил проекту 0.217 с.
+    """
+    shots = scene.get("shots") or []
+    if not shots:
+        # Сцена без кадров ведёт себя как раньше: один кадр на всю длину.
+        single = {"duration": measured_duration, "motion": media.DEFAULT_MOTION}
+        if scene.get("clip_path"):
+            single["clip_path"] = scene["clip_path"]
+        else:
+            single["image_path"] = scene["image_path"]
+        return [single]
+
+    planned = sum(float(s["duration"]) for s in shots)
+    if planned <= 0:
+        raise ValueError("сумма длительностей кадров сцены равна нулю")
+
+    scale = measured_duration / planned
+    fitted = [dict(s, duration=round(float(s["duration"]) * scale, 3)) for s in shots]
+    # Остаток от округления отдаём последнему кадру, чтобы сумма совпала точно.
+    drift = measured_duration - sum(s["duration"] for s in fitted)
+    fitted[-1]["duration"] = round(fitted[-1]["duration"] + drift, 3)
+    return fitted
+
+
 def render_final(
     scenes: list[dict],
     work_dir: Path,
@@ -40,6 +69,14 @@ def render_final(
     Each scene dict must contain local paths and timing:
       audio_path (mp3), audio_duration (float), narration (str),
       and either clip_path (provider mp4) or image_path (still for Ken Burns).
+
+    Сцена может содержать `shots` — список кадров камеры:
+      {duration, motion, image_path | clip_path}.
+    Тогда картинка сцены собирается из кадров встык, а плавный переход
+    остаётся только на стыке сцен: внутри сцены склейка обязана читаться как
+    склейка, иначе монтаж снова превращается в перелистывание.
+
+    Без `shots` сцена ведёт себя как раньше — один кадр на всю длину.
     """
     size = media.frame_size(aspect)
     count = len(scenes)
@@ -58,13 +95,28 @@ def render_final(
     segments: list[Path] = []
     for i, scene in enumerate(scenes):
         tail = transition if i < count - 1 else END_PAD_SEC
-        seg_duration = durations[i] + tail
-        seg = work_dir / f"segment_{i:02d}.mp4"
-        if scene.get("clip_path"):
-            media.make_clip_segment(Path(scene["clip_path"]), seg, seg_duration, size)
+        shots = _scene_shots(scene, durations[i])
+        shot_segments: list[Path] = []
+        for j, shot in enumerate(shots):
+            # Запас под переход достаётся последнему кадру сцены: именно его
+            # хвост съедает перекрёстное затухание со следующей сценой.
+            extra = tail if j == len(shots) - 1 else 0.0
+            seg = work_dir / f"segment_{i:02d}_{j:02d}.mp4"
+            if shot.get("clip_path"):
+                media.make_clip_segment(Path(shot["clip_path"]), seg, shot["duration"] + extra, size)
+            else:
+                media.make_motion_segment(
+                    Path(shot["image_path"]), seg, shot["duration"] + extra, size,
+                    shot.get("motion") or media.DEFAULT_MOTION,
+                )
+            shot_segments.append(seg)
+
+        if len(shot_segments) == 1:
+            segments.append(shot_segments[0])
         else:
-            media.make_kenburns_segment(Path(scene["image_path"]), seg, seg_duration, size)
-        segments.append(seg)
+            scene_seg = work_dir / f"segment_{i:02d}.mp4"
+            media.concat_segments(shot_segments, scene_seg)
+            segments.append(scene_seg)
 
     # 2. голос — встык, без перекрёстных затуханий
     voice = work_dir / "voice.m4a"

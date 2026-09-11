@@ -16,7 +16,7 @@ import httpx
 import media
 from config import TMP_DIR, Config
 from db import Db
-from steps import image_step, render_step, script_step, tts_step, video_step
+from steps import image_step, render_step, script_step, shot_plan, tts_step, video_step
 
 log = logging.getLogger("worker.pipeline")
 
@@ -80,48 +80,83 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             )
             scene.update(audio_url=url, audio_duration_sec=duration)
 
-        # ---- 3. Image per scene
-        for i, scene in enumerate(scenes):
-            if scene.get("image_url"):
+        # ---- 3. Планирование кадров: сцена разбивается на кадры камеры.
+        # Без этого шага сцена остаётся одной картинкой на 6-7 секунд, и ролик
+        # читается как слайдшоу. Как и сцены, кадры планируются один раз:
+        # при повторе уже готовые пропускаются.
+        shots = db.get_shots(project_id)
+        if not shots:
+            db.set_progress(project_id, "Раскадровка…")
+            rows = []
+            for i, (scene, plan) in enumerate(
+                zip(scenes, shot_plan.plan_film_shots(scenes, project.get("style") or "cinematic"))
+            ):
+                for shot in plan:
+                    rows.append(
+                        {**shot, "project_id": project_id, "scene_id": scene["id"],
+                         "order_index": len(rows)}
+                    )
+            shots = db.insert_shots(rows)
+            log.info("[%s] раскадровка: %d кадров из %d сцен", project_id[:8], len(shots), total)
+
+        # ---- 4. Картинка на каждый кадр
+        shot_total = len(shots)
+        for i, shot in enumerate(shots):
+            if shot.get("image_url"):
                 continue
-            db.set_progress(project_id, f"Кадры: сцена {i + 1}/{total}")
-            image_path = work_dir / f"scene_{i:02d}.png"
-            cost = image_step.generate_image(cfg, scene["image_prompt"], image_path, index=i)
-            url = db.upload(f"projects/{project_id}/scene_{i:02d}/image.png", image_path.read_bytes(), "image/png")
-            db.log_cost(project_id, "image", "fal", cost, f"scene {i}")
-            db.update_scene(scene["id"], image_url=url, status="image_done")
-            scene.update(image_url=url)
+            db.set_progress(project_id, f"Кадры: {i + 1}/{shot_total}")
+            image_path = work_dir / f"shot_{i:02d}.png"
+            cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)
+            url = db.upload(f"projects/{project_id}/shot_{i:02d}/image.png", image_path.read_bytes(), "image/png")
+            db.log_cost(project_id, "image", cfg.image_providers[0], cost, f"shot {i}")
+            db.update_shot(shot["id"], image_url=url, status="image_done", actual_cost_usd=cost)
+            shot.update(image_url=url)
 
-        # ---- 4. Image-to-video per scene (only in provider mode)
+        # ---- 5. Клип на кадр (только в режиме провайдера)
         if cfg.effective_video_mode == "provider":
-            for i, scene in enumerate(scenes):
-                if scene.get("video_url"):
+            for i, shot in enumerate(shots):
+                if shot.get("video_url"):
                     continue
-                db.set_progress(project_id, f"Видео: сцена {i + 1}/{total} (может занять несколько минут)")
-                clip_path = work_dir / f"scene_{i:02d}_clip.mp4"
-                cost = video_step.generate_clip(
-                    cfg, scene["image_url"], scene["image_prompt"], clip_path
+                db.set_progress(
+                    project_id, f"Видео: кадр {i + 1}/{shot_total} (может занять несколько минут)"
                 )
-                url = db.upload(f"projects/{project_id}/scene_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
-                db.log_cost(project_id, "video", "fal", cost, f"scene {i}")
-                db.update_scene(scene["id"], video_url=url, status="video_done")
-                scene.update(video_url=url)
+                clip_path = work_dir / f"shot_{i:02d}_clip.mp4"
+                cost = video_step.generate_clip(
+                    cfg, shot["image_url"], shot.get("video_prompt") or shot["visual_prompt"], clip_path
+                )
+                url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
+                db.log_cost(project_id, "video", "fal", cost, f"shot {i}")
+                # Только здесь кадр становится настоящим видео: движение по
+                # картинке засчитывать в real_video нельзя.
+                db.update_shot(
+                    shot["id"], video_url=url, status="video_done",
+                    generation_mode="real_video", actual_cost_usd=cost,
+                )
+                shot.update(video_url=url, generation_mode="real_video")
 
-        # ---- 5. Render: make sure all assets are local (retries may start cold)
+        # ---- 6. Render: make sure all assets are local (retries may start cold)
         db.set_progress(project_id, "Монтаж…")
+        by_scene: dict[str, list[dict]] = {}
+        for i, shot in enumerate(shots):
+            entry = {
+                "duration": float(shot["timeline_duration"]),
+                "motion": shot.get("camera_motion"),
+            }
+            if cfg.effective_video_mode == "provider" and shot.get("video_url"):
+                entry["clip_path"] = _download(shot["video_url"], work_dir / f"shot_{i:02d}_clip.mp4")
+            else:
+                entry["image_path"] = _download(shot["image_url"], work_dir / f"shot_{i:02d}.png")
+            by_scene.setdefault(shot["scene_id"], []).append(entry)
+
         render_scenes = []
         for i, scene in enumerate(scenes):
             audio_path = _download(scene["audio_url"], work_dir / f"scene_{i:02d}.mp3")
-            entry = {
+            render_scenes.append({
                 "audio_path": audio_path,
                 "audio_duration": scene["audio_duration_sec"],
                 "narration": scene.get("narration", ""),
-            }
-            if cfg.effective_video_mode == "provider" and scene.get("video_url"):
-                entry["clip_path"] = _download(scene["video_url"], work_dir / f"scene_{i:02d}_clip.mp4")
-            else:
-                entry["image_path"] = _download(scene["image_url"], work_dir / f"scene_{i:02d}.png")
-            render_scenes.append(entry)
+                "shots": by_scene.get(scene["id"], []),
+            })
 
         aspect = project.get("aspect_ratio") or cfg.video_format
         final_path = render_step.render_final(
