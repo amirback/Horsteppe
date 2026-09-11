@@ -95,22 +95,61 @@ _ENCODE = [
 ]
 
 
-def make_kenburns_segment(
-    image: Path, out: Path, duration: float, size: tuple[int, int]
-) -> None:
-    """Animate a still image with a slow zoom for `duration` seconds.
+# Насколько сильно кадр наезжает или отъезжает. Меньше — незаметно, больше —
+# картинка «плывёт» и выдаёт, что это фотография, а не съёмка.
+ZOOM_RANGE = 0.28
+# Постоянное увеличение для панорам и наклонов: нужен запас поля, внутри
+# которого камера едет, иначе ехать некуда.
+PAN_ZOOM = 1.22
 
-    Video only — audio is assembled separately so that transitions never cut
-    into the narration. Costs nothing: this is the local, no-provider path.
+CENTER_X = "iw/2-(iw/zoom/2)"
+CENTER_Y = "ih/2-(ih/zoom/2)"
+
+# Движения камеры. `p` — доля пройденного кадра, от 0 до 1.
+# Ключ → (выражение зума, выражение x, выражение y).
+MOTIONS: dict[str, tuple[str, str, str]] = {
+    "push_in": (f"1+{ZOOM_RANGE}*{{p}}", CENTER_X, CENTER_Y),
+    "pull_out": (f"{1 + ZOOM_RANGE}-{ZOOM_RANGE}*{{p}}", CENTER_X, CENTER_Y),
+    "pan_right": (f"{PAN_ZOOM}", "(iw-iw/zoom)*{p}", CENTER_Y),
+    "pan_left": (f"{PAN_ZOOM}", "(iw-iw/zoom)*(1-{p})", CENTER_Y),
+    "tilt_down": (f"{PAN_ZOOM}", CENTER_X, "(ih-ih/zoom)*{p}"),
+    "tilt_up": (f"{PAN_ZOOM}", CENTER_X, "(ih-ih/zoom)*(1-{p})"),
+    "static": ("1", CENTER_X, CENTER_Y),
+}
+
+DEFAULT_MOTION = "push_in"
+
+
+def make_motion_segment(
+    image: Path, out: Path, duration: float, size: tuple[int, int],
+    motion: str = DEFAULT_MOTION,
+) -> None:
+    """Оживить неподвижную картинку движением камеры на `duration` секунд.
+
+    Раньше движение было одно на всех — медленный наезд, — и ролик из
+    нескольких сцен читался как листание фотографий. Теперь кадр получает
+    своё движение, и соседние кадры отличаются друг от друга.
+
+    Только видео: звук собирается отдельно, чтобы переходы не резали речь.
+    Денег не стоит — это локальный путь без провайдеров.
+
+    Важно: это `IMAGE_MOTION`, а не настоящее видео. Выдавать его за
+    `REAL_VIDEO` запрещено — на этом различении стоит метрика покрытия.
     """
     w, h = size
     frames = max(int(round(duration * FPS)), FPS)
-    # Upscale 2x before zoompan to avoid the jitter zoompan produces at 1x.
+    zoom_expr, x_expr, y_expr = MOTIONS.get(motion, MOTIONS[DEFAULT_MOTION])
+    # Доля пройденного пути. `on` — номер выходного кадра.
+    progress = f"(on/{max(frames - 1, 1)})"
+    zoom = zoom_expr.replace("{p}", progress)
+    x = x_expr.replace("{p}", progress)
+    y = y_expr.replace("{p}", progress)
+
+    # Увеличение вдвое до zoompan убирает дрожание, которое он даёт на 1x.
     vf = (
         f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,"
         f"crop={w * 2}:{h * 2},"
-        f"zoompan=z='min(1+0.0008*on,1.25)'"
-        f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f"zoompan=z='{zoom}':x='{x}':y='{y}'"
         f":d={frames}:s={w}x{h}:fps={FPS},"
         f"format=yuv420p"
     )
@@ -118,6 +157,14 @@ def make_kenburns_segment(
         ["-loop", "1", "-i", str(image), "-vf", vf, "-t", f"{duration:.3f}",
          *_ENCODE, "-an", str(out)]
     )
+
+
+def make_kenburns_segment(
+    image: Path, out: Path, duration: float, size: tuple[int, int]
+) -> None:
+    """Прежнее имя одного-единственного движения. Оставлено, чтобы не ломать
+    вызывающий код до перехода монтажа на кадры."""
+    make_motion_segment(image, out, duration, size, DEFAULT_MOTION)
 
 
 def make_clip_segment(
