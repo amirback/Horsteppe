@@ -44,17 +44,27 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 cfg, project["topic"], project["style"], project["duration_sec"]
             )
             db.log_cost(project_id, "script", "anthropic", script["cost_usd"], cfg.llm_model)
+            # Описание героев и мира вшивается в промпт каждой сцены прямо
+            # здесь. Так оно переживает повтор: на второй попытке сценарий
+            # заново не пишется, и хранить описание больше негде. Без него
+            # генератор рисует новых людей в каждом кадре.
+            cast = (script.get("continuity") or "").strip()
+            head = f"{cast}. " if cast else ""
             scenes = db.insert_scenes(
                 [
                     {
                         "project_id": project_id,
                         "order_index": i,
                         "narration": s["narration"],
-                        "image_prompt": s["image_prompt"],
+                        "image_prompt": f"{head}{s['image_prompt']}",
                     }
                     for i, s in enumerate(script["scenes"])
                 ]
             )
+            # Кадры, придуманные сценаристом, нужны только на этой попытке:
+            # дальше они уже лежат в таблице кадров.
+            for scene, authored in zip(scenes, script["scenes"]):
+                scene["shots"] = authored.get("shots") or []
 
         total = len(scenes)
 

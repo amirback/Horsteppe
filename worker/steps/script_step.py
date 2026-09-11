@@ -23,6 +23,17 @@ SCENES_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
+        # Описание героев и мира, общее для всего ролика. Без него каждый кадр
+        # рисуется независимо, и герои меняются каждые три секунды: фильм
+        # разваливается на фотографии незнакомых людей.
+        "continuity": {
+            "type": "string",
+            "description": (
+                "ENGLISH. The recurring cast and world, repeated in every shot: "
+                "each character's age, gender, hair, clothing; the location; "
+                "colour palette and lighting. Concrete and unchanging."
+            ),
+        },
         "scenes": {
             "type": "array",
             "items": {
@@ -36,13 +47,35 @@ SCENES_SCHEMA = {
                         "type": "string",
                         "description": "English text-to-image prompt for this scene, vertical 9:16 composition",
                     },
+                    # Кадры камеры внутри сцены. Раньше их придумывала механика,
+                    # склеивая половину закадрового текста с общим промптом, —
+                    # и внутри сцены получались случайные разные картинки.
+                    "shots": {
+                        "type": "array",
+                        "description": "2-3 camera shots covering this scene",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "framing": {
+                                    "type": "string",
+                                    "description": "ENGLISH framing, e.g. 'wide establishing shot', 'close-up on hands'",
+                                },
+                                "action": {
+                                    "type": "string",
+                                    "description": "ENGLISH: what the same recurring characters do in this shot",
+                                },
+                            },
+                            "required": ["framing", "action"],
+                            "additionalProperties": False,
+                        },
+                    },
                 },
-                "required": ["narration", "image_prompt"],
+                "required": ["narration", "image_prompt", "shots"],
                 "additionalProperties": False,
             },
         },
     },
-    "required": ["title", "scenes"],
+    "required": ["title", "continuity", "scenes"],
     "additionalProperties": False,
 }
 
@@ -74,10 +107,19 @@ def _mock_script(topic: str, style: str, duration_sec: int) -> dict:
             "narration": f"{beats[i]}. Тестовая озвучка сцены {i + 1} из {n} по теме: {short_topic}.",
             "image_prompt": f"{style} style photo illustrating '{short_topic}', scene {i + 1} of {n}, "
             f"vertical 9:16 composition, no text, no logos, no captions",
+            "shots": [
+                {"framing": "wide establishing shot", "action": f"scene {i + 1} begins"},
+                {"framing": "close-up", "action": f"detail of scene {i + 1}"},
+            ],
         }
         for i in range(n)
     ]
-    return {"title": topic, "scenes": scenes, "cost_usd": 0.0}
+    return {
+        "title": topic,
+        "continuity": f"Test cast and world for '{short_topic}', {style} look, consistent palette",
+        "scenes": scenes,
+        "cost_usd": 0.0,
+    }
 
 
 def generate_script(cfg: Config, topic: str, style: str, duration_sec: int) -> dict:
@@ -87,7 +129,7 @@ def generate_script(cfg: Config, topic: str, style: str, duration_sec: int) -> d
         return _mock_script(topic, style, duration_sec)
 
     n = _scene_count(duration_sec)
-    words_per_scene = round(duration_sec / n * 2.3)  # ~2.3 words/sec of narration
+    words_per_scene = _words_per_scene(duration_sec, n)
 
     prompt = f"""You are a short-form video scriptwriter for vertical (9:16) social videos.
 
@@ -98,9 +140,18 @@ Visual style: {style}
 
 Requirements:
 - Exactly {n} scenes.
-- Each scene's narration is about {words_per_scene} words (spoken aloud it must fit ~{duration_sec // n} seconds). Write narration in the SAME language as the topic.
+- Each scene's narration is AT LEAST {words_per_scene} words. Fewer words means the
+  finished video comes out too short, which is a failure. Write narration in the
+  SAME language as the topic.
 - The narration must flow as one continuous story across scenes: a hook in scene 1, development, and a punchy ending.
+- `continuity` describes the SAME cast and world used in every single shot: name each
+  character with age, hair, exact clothing; name the location, the colour palette and
+  the lighting. This text is pasted into every image prompt, so it must be concrete
+  and must never contradict itself.
 - Each image_prompt is in ENGLISH, describes a single striking {style} shot for that scene, mentions vertical 9:16 composition, and contains NO text/captions/logos in the image.
+- Give each scene 2-3 `shots`: different framings of the SAME moment and the SAME
+  characters — for example a wide shot, then a close-up on a face or hands. Shots are
+  camera angles on one continuous action, not separate events with new people.
 - No emojis, no hashtags, no scene numbers inside narration."""
 
     if cfg.llm_provider == "openrouter":
@@ -110,7 +161,31 @@ Requirements:
 
     scenes = _validate(data, n)
     log.info("script: %d сцен, провайдер %s, стоимость $%.4f", len(scenes), cfg.llm_provider, cost)
-    return {"title": data.get("title", topic), "scenes": scenes, "cost_usd": cost}
+    return {
+        "title": data.get("title", topic),
+        "continuity": (data.get("continuity") or "").strip(),
+        "scenes": scenes,
+        "cost_usd": cost,
+    }
+
+
+# Реальный темп синтезированной речи, замеренный на готовых роликах:
+# 58 слов за 22.60 секунды = 2.57 слова в секунду. В коде стояло 2.3, и ролик
+# выходил короче заказанного.
+WORDS_PER_SECOND = 2.57
+# Модель систематически пишет меньше, чем просят: на 17 заказанных слов давала
+# 14-15. Запас компенсирует этот недобор, а не растягивает ролик намеренно.
+LENGTH_SAFETY = 1.12
+
+
+def _words_per_scene(duration_sec: int, scene_count: int) -> int:
+    """Сколько слов заказать у сценариста на одну сцену.
+
+    Просили 30 секунд — получали 22.6, то есть на четверть меньше. Допуск в
+    CLAUDE.md §8 составляет ±20%, так что это был выход за границу, а не
+    особенность. Причин было две, и обе учтены здесь.
+    """
+    return max(4, round(duration_sec * LENGTH_SAFETY / scene_count * WORDS_PER_SECOND))
 
 
 def _validate(data: dict, expected: int) -> list[dict]:

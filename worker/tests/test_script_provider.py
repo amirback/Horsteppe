@@ -121,3 +121,29 @@ def test_too_few_scenes_is_rejected(monkeypatch, cfg):
     step = _patch(monkeypatch, FakeResponse(200, _completion(json.dumps(bad))))
     with pytest.raises(RuntimeError, match="сцен"):
         step.generate_script(cfg, "Тема", "cinematic", 30)
+
+
+def test_word_budget_matches_the_measured_speech_rate():
+    """Просили 30 секунд — получали 22.6, то есть на четверть меньше.
+
+    Причин было две: в коде стоял темп 2.3 слова в секунду вместо
+    замеренных 2.57, и модель писала меньше, чем просят (14-15 слов
+    вместо 17). Допуск CLAUDE.md §8 — ±20%, так что это был выход
+    за границу.
+    """
+    from steps import script_step
+
+    per_scene = script_step._words_per_scene(30, 4)
+    total = per_scene * 4
+    # Даже если модель недодаст 12%, как раньше, ролик остаётся в допуске.
+    shortfall = total * 0.88 / script_step.WORDS_PER_SECOND
+    assert 24 <= shortfall <= 36, f"{per_scene} слов на сцену даёт {shortfall:.1f} с"
+    # А при точном исполнении — не длиннее верхней границы допуска.
+    exact = total / script_step.WORDS_PER_SECOND
+    assert exact <= 36, f"{exact:.1f} с"
+
+
+def test_word_budget_scales_with_duration():
+    from steps import script_step
+
+    assert script_step._words_per_scene(60, 4) > script_step._words_per_scene(30, 4)

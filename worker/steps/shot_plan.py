@@ -101,6 +101,8 @@ def plan_scene_shots(
     image_prompt: str,
     style: str = "cinematic",
     motion_offset: int = 0,
+    continuity: str = "",
+    authored_shots: list[dict] | None = None,
 ) -> list[dict]:
     """Разбить одну сцену на кадры.
 
@@ -111,9 +113,17 @@ def plan_scene_shots(
     каждая сцена начинала движение заново, и весь ролик шёл «наезд, панорама,
     наезд, панорама»: формально склейки есть, а камера одна и та же.
     """
-    count = shot_count(audio_duration_sec, style)
+    # Кадры, придуманные сценаристом, лучше механической нарезки: он знает,
+    # что происходит в сцене, и держит одних и тех же героев. Механика
+    # остаётся запасным путём — например, в безопасном режиме.
+    authored = [s for s in (authored_shots or []) if (s.get("framing") or s.get("action"))]
+    count = len(authored) or shot_count(audio_duration_sec, style)
     if count == 0:
         return []
+    # Слишком мелкая нарезка ломает читаемость кадра.
+    while count > 1 and audio_duration_sec / count < MIN_SHOT_SEC:
+        count -= 1
+        authored = authored[:count]
 
     durations = split_durations(audio_duration_sec, count)
     texts = split_narration(narration, count)
@@ -144,8 +154,11 @@ def plan_scene_shots(
                 # Сколько заказывать у провайдера — решается позже; пока
                 # равно длине в монтаже.
                 "generation_duration": seconds,
-                "visual_prompt": _shot_prompt(image_prompt, text, i, count),
-                "video_prompt": text or narration,
+                "visual_prompt": _shot_prompt(
+                    image_prompt, text, i, count, continuity,
+                    authored[i] if i < len(authored) else None,
+                ),
+                "video_prompt": (authored[i].get("action") if i < len(authored) else None) or text or narration,
                 "camera_motion": CAMERA_MOTIONS[(motion_offset + i) % len(CAMERA_MOTIONS)],
                 "motion_requirement": requirement,
                 # Важность решает, куда уйдёт дорогая генерация.
@@ -160,15 +173,37 @@ def plan_scene_shots(
     return shots
 
 
-def _shot_prompt(scene_prompt: str, shot_text: str, index: int, count: int) -> str:
-    """Промпт кадра: общий вид сцены плюс то, что происходит именно здесь."""
-    if count == 1 or not shot_text:
-        return scene_prompt
+def _shot_prompt(
+    scene_prompt: str, shot_text: str, index: int, count: int,
+    continuity: str = "", authored: dict | None = None,
+) -> str:
+    """Промпт кадра.
+
+    Описание героев идёт первым и повторяется в каждом кадре — иначе генератор
+    рисует новых людей каждые три секунды, и фильм разваливается на фотографии
+    незнакомцев. Замер на готовом ролике: соседние кадры одной сцены отличались
+    друг от друга на 48-60 единиц из 100, то есть на них были разные люди.
+
+    Закадровый текст в промпт не попадает: он на языке зрителя, а генератор
+    картинок понимает английский, и смешение языков портит кадр.
+    """
+    head = f"{continuity.strip()}. " if continuity.strip() else ""
+
+    if authored:
+        framing = (authored.get("framing") or "").strip()
+        action = (authored.get("action") or "").strip()
+        body = ", ".join(x for x in (framing, action) if x)
+        return f"{head}{scene_prompt}. {body}"
+
+    if count == 1:
+        return f"{head}{scene_prompt}"
     framing = ("wide establishing shot", "medium shot", "close-up", "detail shot")
-    return f"{scene_prompt}. {framing[index % len(framing)]}: {shot_text}"
+    return f"{head}{scene_prompt}. {framing[index % len(framing)]}"
 
 
-def plan_film_shots(scenes: list[dict], style: str = "cinematic") -> list[list[dict]]:
+def plan_film_shots(
+    scenes: list[dict], style: str = "cinematic", continuity: str = "",
+) -> list[list[dict]]:
     """Спланировать кадры всего фильма подряд.
 
     Движение камеры и крупность планов продолжаются сквозь границы сцен, а не
@@ -185,6 +220,8 @@ def plan_film_shots(scenes: list[dict], style: str = "cinematic") -> list[list[d
             image_prompt=scene.get("image_prompt", ""),
             style=style,
             motion_offset=offset,
+            continuity=continuity,
+            authored_shots=scene.get("shots"),
         )
         offset += len(shots)
         plans.append(shots)

@@ -169,3 +169,69 @@ def test_real_film_gets_more_shots_than_scenes():
     _, plans = _film()
     count = sum(len(s) for s in plans)
     assert count >= 8, count
+
+
+# --- постоянство героев и авторские кадры ---------------------------------
+
+CAST = "ALEX, 16, short black hair, grey hoodie; SAM, 16, red curls, denim jacket"
+
+
+def test_cast_description_goes_into_every_shot():
+    """Без описания героев генератор рисует новых людей каждые три секунды.
+
+    Замер на готовом ролике: соседние кадры одной сцены отличались на 48-60
+    единиц из 100 — то есть на них были разные люди.
+    """
+    shots = _plan(duration=10.0, continuity=CAST)
+    assert shots, "кадров не получилось"
+    for s in shots:
+        assert s["visual_prompt"].startswith(CAST), s["visual_prompt"][:80]
+
+
+def test_narration_never_leaks_into_the_image_prompt():
+    """Закадровый текст на языке зрителя, а генератор картинок понимает
+    английский: смешение языков портит кадр."""
+    narration = "Два подростка собрали первое приложение за одну ночь"
+    for s in _plan(duration=10.0, narration=narration, continuity=CAST):
+        assert "подростка" not in s["visual_prompt"]
+        assert "ночь" not in s["visual_prompt"]
+
+
+def test_shots_written_by_the_scriptwriter_win_over_mechanics():
+    authored = [
+        {"framing": "wide establishing shot", "action": "both boys hunch over one laptop"},
+        {"framing": "close-up on hands", "action": "fingers hammering the keyboard"},
+    ]
+    shots = _plan(duration=9.0, continuity=CAST, authored_shots=authored)
+    assert len(shots) == 2
+    assert "hunch over one laptop" in shots[0]["visual_prompt"]
+    assert "fingers hammering" in shots[1]["visual_prompt"]
+
+
+def test_authored_shots_are_dropped_when_they_would_be_too_short():
+    """Три кадра на четыре секунды — нечитаемая нарезка."""
+    authored = [{"framing": f"shot {i}", "action": f"action {i}"} for i in range(3)]
+    shots = _plan(duration=4.0, authored_shots=authored)
+    assert len(shots) == 2
+    assert all(s["timeline_duration"] >= shot_plan.MIN_SHOT_SEC - 0.001 for s in shots)
+
+
+def test_mechanics_still_work_without_a_scriptwriter():
+    """Безопасный режим и старые проекты идут прежним путём."""
+    shots = _plan(duration=10.0)
+    assert len(shots) >= 2
+    assert all(s["visual_prompt"] for s in shots)
+
+
+def test_film_passes_the_cast_through_every_scene():
+    scenes = [
+        {"narration": "фраза сцены", "audio_duration_sec": 7.0,
+         "image_prompt": f"cinematic shot, scene {i}",
+         "shots": [{"framing": "wide shot", "action": f"action {i}a"},
+                   {"framing": "close-up", "action": f"action {i}b"}]}
+        for i in range(3)
+    ]
+    plans = shot_plan.plan_film_shots(scenes, continuity=CAST)
+    flat = [s for scene in plans for s in scene]
+    assert len(flat) == 6
+    assert all(s["visual_prompt"].startswith(CAST) for s in flat)
