@@ -120,3 +120,32 @@ def test_old_name_still_works(image, tmp_path):
     out = tmp_path / "legacy.mp4"
     media.make_kenburns_segment(image, out, DURATION, SIZE)
     assert _difference(_frames(out)[0], _frames(out)[-1]) > 2.0
+
+
+def test_mixed_clip_and_image_segments_survive_concatenation(image, tmp_path):
+    """Склейка клипа с движением по картинке не должна обрывать картинку.
+
+    Склейка шла через `-c copy`. Пока все сегменты рождались из картинок, их
+    параметры совпадали и всё работало. Стоило смешать в одной сцене клип
+    провайдера и движение по картинке — временные базы разошлись, и поток
+    молча обрывался на первом стыке: контейнер показывал полную длину по
+    звуку, а картинка заканчивалась через восемь секунд вместо тридцати.
+    Ошибки не было ни одной, поэтому проверяем декодированием.
+    """
+    clip_source = tmp_path / "source.mp4"
+    media.run_ffmpeg([
+        "-f", "lavfi", "-i", f"testsrc2=size={SIZE[0]}x{SIZE[1]}:rate=30:duration=5",
+        "-pix_fmt", "yuv420p", str(clip_source),
+    ])
+
+    from_clip = tmp_path / "a.mp4"
+    from_image = tmp_path / "b.mp4"
+    media.make_clip_segment(clip_source, from_clip, 2.0, SIZE)
+    media.make_motion_segment(image, from_image, 2.0, SIZE, "pan_right")
+
+    joined = tmp_path / "joined.mp4"
+    media.concat_segments([from_clip, from_image, from_clip], joined)
+
+    # media_duration_sec считает по реально декодированным кадрам, а не по
+    # заголовку контейнера — именно это и ловит обрыв.
+    assert abs(media.media_duration_sec(joined) - 6.0) < 0.3, "склейка потеряла картинку"

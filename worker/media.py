@@ -203,12 +203,23 @@ def make_clip_segment(
 
 
 def concat_segments(segments: list[Path], out: Path) -> None:
-    """Join segments with hard cuts, without re-encoding."""
+    """Join segments with hard cuts.
+
+    Перекодирование здесь обязательно. Раньше склейка шла через `-c copy`, и
+    пока все сегменты рождались из картинок, их параметры совпадали. Стоило
+    смешать в одной сцене клип провайдера и движение по картинке — временные
+    базы разошлись, и склеенный поток молча обрывался на первом же стыке:
+    контейнер показывал полную длину по звуку, а картинка заканчивалась через
+    восемь секунд вместо тридцати. Ошибки при этом не было ни одной.
+    """
     list_file = out.with_suffix(".txt")
     q = chr(39)
     lines = [f"file {q}{str(p.resolve()).replace(q, q + chr(92) + q + q)}{q}" for p in segments]
     list_file.write_text("\n".join(lines), encoding="utf-8")
-    run_ffmpeg(["-f", "concat", "-safe", "0", "-i", str(list_file), "-c", "copy", str(out)])
+    run_ffmpeg([
+        "-f", "concat", "-safe", "0", "-i", str(list_file),
+        "-vf", f"fps={FPS},format=yuv420p", *_ENCODE, "-an", str(out),
+    ])
     list_file.unlink(missing_ok=True)
 
 
