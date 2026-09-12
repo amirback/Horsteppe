@@ -76,6 +76,15 @@ def exact_duration_sec(path: Path) -> float:
         return audio_duration_sec(path)
 
 
+def image_height(path: Path) -> int:
+    """Высота картинки в пикселях, по разбору вывода ffmpeg."""
+    _, log_text = _probe_stderr(path)
+    m = re.search(r"Stream #\d+:\d+.*: Video: .*?(\d{2,5})x(\d{2,5})", log_text)
+    if not m:
+        raise RuntimeError(f"не удалось определить размер картинки: {path.name}")
+    return int(m.group(2))
+
+
 def media_duration_sec(path: Path) -> float:
     """Duration of any media file, parsed from ffmpeg output (no ffprobe needed)."""
     cmd = [ffmpeg_path(), "-hide_banner", "-i", str(path), "-f", "null", "-"]

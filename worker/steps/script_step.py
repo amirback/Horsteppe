@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 import httpx
 
@@ -140,9 +141,9 @@ Visual style: {style}
 
 Requirements:
 - Exactly {n} scenes.
-- Each scene's narration is AT LEAST {words_per_scene} words. Fewer words means the
-  finished video comes out too short, which is a failure. Write narration in the
-  SAME language as the topic.
+- Each scene's narration is between {words_per_scene} and {words_per_scene + 4} words.
+  Fewer makes the finished video too short, more makes it too long; both are failures.
+  Count the words. Write narration in the SAME language as the topic.
 - The narration must flow as one continuous story across scenes: a hook in scene 1, development, and a punchy ending.
 - `continuity` describes the SAME cast and world used in every single shot: name each
   character with age, hair, exact clothing; name the location, the colour palette and
@@ -160,6 +161,7 @@ Requirements:
         data, cost = _via_anthropic(cfg, prompt)
 
     scenes = _validate(data, n)
+    scenes = _clamp_narration(scenes, words_per_scene)
     log.info("script: %d сцен, провайдер %s, стоимость $%.4f", len(scenes), cfg.llm_provider, cost)
     return {
         "title": data.get("title", topic),
@@ -169,13 +171,13 @@ Requirements:
     }
 
 
-# Реальный темп синтезированной речи, замеренный на готовых роликах:
-# 58 слов за 22.60 секунды = 2.57 слова в секунду. В коде стояло 2.3, и ролик
-# выходил короче заказанного.
-WORDS_PER_SECOND = 2.57
-# Модель систематически пишет меньше, чем просят: на 17 заказанных слов давала
-# 14-15. Запас компенсирует этот недобор, а не растягивает ролик намеренно.
-LENGTH_SAFETY = 1.12
+# Реальный темп синтезированной речи, замеренный на готовых роликах: 2.57 и
+# 2.82 слова в секунду на двух прогонах. Берём середину. В коде стояло 2.3, и
+# ролик выходил короче заказанного.
+WORDS_PER_SECOND = 2.70
+# Небольшой запас на недобор: модель пишет меньше, чем просят. Большим он быть
+# не должен — перебор теперь ограничен сверху, и раздувать заказ незачем.
+LENGTH_SAFETY = 1.05
 
 
 def _words_per_scene(duration_sec: int, scene_count: int) -> int:
@@ -186,6 +188,44 @@ def _words_per_scene(duration_sec: int, scene_count: int) -> int:
     особенность. Причин было две, и обе учтены здесь.
     """
     return max(4, round(duration_sec * LENGTH_SAFETY / scene_count * WORDS_PER_SECOND))
+
+
+# Сколько слов сверх заказа ещё терпимо. Просьба «не меньше N» одну беду
+# сменила на другую: модель написала 162 слова вместо 88, и ролик вышел
+# 57 секунд вместо 30. Верхняя граница обязана быть жёсткой и подобрана так,
+# чтобы даже полный перебор оставался внутри допуска ±20% из CLAUDE.md §8.
+NARRATION_OVERSHOOT = 1.12
+
+
+def _clamp_narration(scenes: list[dict], words_per_scene: int) -> list[dict]:
+    """Обрезать слишком длинную озвучку по границе предложения.
+
+    Модель систематически промахивается мимо заказанной длины в обе стороны,
+    а длительность ролика идёт ровно за голосом. Обрезка по точке звучит как
+    законченная мысль; обрезка по слову — как оборванная запись.
+    """
+    limit = int(words_per_scene * NARRATION_OVERSHOOT)
+    out = []
+    for scene in scenes:
+        text = (scene.get("narration") or "").strip()
+        if len(text.split()) <= limit:
+            out.append(scene)
+            continue
+
+        kept: list[str] = []
+        for sentence in re.split(r"(?<=[.!?…])\s+", text):
+            if kept and len(" ".join(kept + [sentence]).split()) > limit:
+                break
+            kept.append(sentence)
+        trimmed = " ".join(kept)
+        # Первое предложение принимается всегда — иначе можно остаться ни с
+        # чем. Но если и оно длиннее лимита, режем по словам: иначе одно
+        # длинное предложение проходит мимо ограничения целиком.
+        if not trimmed or len(trimmed.split()) > limit:
+            trimmed = " ".join(text.split()[:limit])
+        log.info("озвучка сцены укорочена: %d слов → %d", len(text.split()), len(trimmed.split()))
+        out.append({**scene, "narration": trimmed})
+    return out
 
 
 def _validate(data: dict, expected: int) -> list[dict]:

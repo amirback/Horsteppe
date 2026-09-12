@@ -154,9 +154,42 @@ def _via_pollinations(cfg: Config, prompt: str, out_path: Path, index: int) -> f
             continue
 
         out_path.write_bytes(resp.content)
+        _strip_watermark(out_path)
         return COSTS["pollinations_per_call"]
 
     raise ImageError(f"Pollinations не отдал кадр за {POLLINATIONS_ATTEMPTS} попытки — {last}")
+
+
+# Доля кадра снизу, которую занимает подпись сервиса. Замер по яркости строк:
+# знак живёт примерно с 945-й по 1020-ю строку кадра высотой 1024, то есть
+# нижние 8%. Срезаем 9% с запасом.
+WATERMARK_FRACTION = 0.09
+
+
+def _strip_watermark(path: Path) -> None:
+    """Срезать подпись сервиса снизу кадра.
+
+    Параметр `nologo=true` сервис игнорирует без зарегистрированного ключа —
+    проверено: подпись «pollinations.ai» приходит в каждом кадре. Отдавать
+    клиенту ролик с водяным знаком чужой компании нельзя, поэтому полоса
+    срезается. Кадр становится чуть ниже; движение по кадру всё равно
+    масштабирует и кадрирует исходник под нужный формат.
+    """
+    import media
+
+    try:
+        height = media.image_height(path)
+    except Exception as e:  # noqa: BLE001 — размер не прочитался, кадр не портим
+        log.warning("не удалось определить высоту кадра, подпись не срезана: %s", e)
+        return
+
+    keep = int(height * (1 - WATERMARK_FRACTION))
+    keep -= keep % 2  # чётная высота: иначе кодировщик ругается
+    if keep <= 0:
+        return
+    trimmed = path.with_suffix(".trimmed.png")
+    media.run_ffmpeg(["-i", str(path), "-vf", f"crop=iw:{keep}:0:0", str(trimmed)])
+    trimmed.replace(path)
 
 
 def _via_together(cfg: Config, prompt: str, out_path: Path, index: int) -> float:

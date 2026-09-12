@@ -147,3 +147,61 @@ def test_word_budget_scales_with_duration():
     from steps import script_step
 
     assert script_step._words_per_scene(60, 4) > script_step._words_per_scene(30, 4)
+
+
+def test_overlong_narration_is_cut_at_a_sentence_boundary():
+    """Просьба «не меньше N слов» породила обратную беду.
+
+    Модель написала 162 слова вместо 88, и ролик вышел 57 секунд вместо 30.
+    Верхняя граница обязана быть жёсткой, а обрезка — по точке: обрыв на
+    полуслове звучит как испорченная запись.
+    """
+    from steps import script_step
+
+    long_text = " ".join([f"Предложение номер {i} здесь." for i in range(1, 21)])
+    scenes = [{"narration": long_text, "image_prompt": "p", "shots": []}]
+    out = script_step._clamp_narration(scenes, words_per_scene=20)
+
+    words = out[0]["narration"].split()
+    assert len(words) <= int(20 * script_step.NARRATION_OVERSHOOT)
+    assert out[0]["narration"].rstrip().endswith("."), out[0]["narration"][-40:]
+
+
+def test_narration_within_the_budget_is_left_alone():
+    from steps import script_step
+
+    scenes = [{"narration": "Короткая фраза сцены.", "image_prompt": "p", "shots": []}]
+    assert script_step._clamp_narration(scenes, 20) == scenes
+
+
+def test_one_giant_sentence_is_still_cut():
+    """Единственное предложение длиннее лимита резать больше негде."""
+    from steps import script_step
+
+    scenes = [{"narration": " ".join(["слово"] * 100), "image_prompt": "p", "shots": []}]
+    out = script_step._clamp_narration(scenes, 20)
+    assert len(out[0]["narration"].split()) == int(20 * script_step.NARRATION_OVERSHOOT)
+
+
+def test_every_plausible_script_length_lands_inside_the_tolerance():
+    """Допуск CLAUDE.md §8 — ±20%. Проверяем оба края разом.
+
+    Недобор уже давал 22.6 с вместо 30, перебор — 57.5 с вместо 30.
+    Заказ и жёсткий потолок подобраны так, чтобы обе крайности остались
+    внутри допуска.
+    """
+    from steps import script_step
+
+    for requested in (15, 30, 45, 60):
+        n = script_step._scene_count(requested)
+        ordered = script_step._words_per_scene(requested, n)
+        cap = int(ordered * script_step.NARRATION_OVERSHOOT)
+
+        # Модель недодала столько же, сколько недодавала раньше.
+        shortest = ordered * n * 0.88 / script_step.WORDS_PER_SECOND
+        # Модель написала по самому потолку, и обрезка сработала.
+        longest = cap * n / script_step.WORDS_PER_SECOND
+
+        low, high = requested * 0.8, requested * 1.2
+        assert low <= shortest <= high, f"{requested} с: недобор даёт {shortest:.1f} с"
+        assert low <= longest <= high, f"{requested} с: перебор даёт {longest:.1f} с"

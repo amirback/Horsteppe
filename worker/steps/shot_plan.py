@@ -124,6 +124,11 @@ def plan_scene_shots(
     while count > 1 and audio_duration_sec / count < MIN_SHOT_SEC:
         count -= 1
         authored = authored[:count]
+    # Слишком крупная возвращает слайдшоу: сценарист дал три кадра на сцену в
+    # 17 секунд, и вышли куски по 5.8 секунды при потолке в 5. Недостающим
+    # кадрам крупность подбирает механика.
+    while audio_duration_sec / count > MAX_SHOT_SEC:
+        count += 1
 
     durations = split_durations(audio_duration_sec, count)
     texts = split_narration(narration, count)

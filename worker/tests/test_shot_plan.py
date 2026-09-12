@@ -235,3 +235,17 @@ def test_film_passes_the_cast_through_every_scene():
     flat = [s for scene in plans for s in scene]
     assert len(flat) == 6
     assert all(s["visual_prompt"].startswith(CAST) for s in flat)
+
+
+def test_authored_shots_are_split_further_when_too_long():
+    """Сценарист дал 3 кадра на 17 секунд — вышли куски по 5.8 с при потолке 5.
+
+    Так возвращается слайдшоу: кадр длиннее пяти секунд снова читается как
+    фотография с зумом.
+    """
+    authored = [{"framing": f"shot {i}", "action": f"action {i}"} for i in range(3)]
+    shots = _plan(duration=17.4, authored_shots=authored)
+    assert len(shots) >= 4, f"кадров {len(shots)}"
+    for s in shots:
+        assert s["timeline_duration"] <= shot_plan.MAX_SHOT_SEC + 0.001, s["timeline_duration"]
+    assert abs(sum(s["timeline_duration"] for s in shots) - 17.4) < 0.001
