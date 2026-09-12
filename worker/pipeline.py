@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 
 import media
+import safe_mode
 from config import TMP_DIR, Config
 from db import Db
 from steps import image_step, render_step, script_step, shot_plan, tts_step, video_step
@@ -28,6 +29,34 @@ def _download(url: str, dest: Path) -> Path:
             resp.raise_for_status()
         dest.write_bytes(resp.content)
     return dest
+
+
+# Кадры, которым настоящее движение нужно в первую очередь. Низкая важность
+# НЕ означает «поставить картинку»: она означает «взять видео подешевле»,
+# а движение по картинке остаётся последним средством.
+REAL_VIDEO_REQUIREMENTS = ("critical", "high", "normal")
+
+
+def _wants_real_video(shot: dict) -> bool:
+    """Нужно ли этому кадру настоящее видео."""
+    return (shot.get("motion_requirement") or "normal") in REAL_VIDEO_REQUIREMENTS
+
+
+def real_video_coverage(shots: list[dict]) -> float:
+    """Доля таймлайна, закрытая настоящим видео.
+
+    Зумящаяся фотография сюда не попадает никогда — на этом различении стоит
+    всё обещание продукта.
+    """
+    total = sum(float(s.get("timeline_duration") or 0) for s in shots)
+    if total <= 0:
+        return 0.0
+    real = sum(
+        float(s.get("timeline_duration") or 0)
+        for s in shots
+        if s.get("video_url") and s.get("generation_mode") == "real_video"
+    )
+    return round(real / total, 4)
 
 
 def run_project(cfg: Config, db: Db, project_id: str) -> None:
@@ -122,18 +151,31 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             db.update_shot(shot["id"], image_url=url, status="image_done", actual_cost_usd=cost)
             shot.update(image_url=url)
 
-        # ---- 5. Клип на кадр (только в режиме провайдера)
-        if cfg.effective_video_mode == "provider":
+        # ---- 5. Настоящее видео на кадр.
+        #
+        # Решение принимается по каждому кадру, а не одним переключателем на
+        # весь ролик: важному кадру настоящее движение нужнее, чем фону.
+        # Провал одного кадра не понижает весь фильм — он откатывается на
+        # движение по картинке в одиночку, и это записывается в лог.
+        if safe_mode.is_paid_video_allowed(cfg):
             for i, shot in enumerate(shots):
-                if shot.get("video_url"):
+                if shot.get("video_url") or not _wants_real_video(shot):
                     continue
                 db.set_progress(
                     project_id, f"Видео: кадр {i + 1}/{shot_total} (может занять несколько минут)"
                 )
                 clip_path = work_dir / f"shot_{i:02d}_clip.mp4"
-                cost = video_step.generate_clip(
-                    cfg, shot["image_url"], shot.get("video_prompt") or shot["visual_prompt"], clip_path
-                )
+                try:
+                    cost = video_step.generate_clip(
+                        cfg, shot["image_url"],
+                        shot.get("video_prompt") or shot["visual_prompt"], clip_path,
+                    )
+                except video_step.VideoError as e:
+                    # Падение провайдера не должно уносить проект: кадр
+                    # остаётся движением по картинке, остальные идут дальше.
+                    log.warning("[%s] кадр %d без настоящего видео: %s", project_id[:8], i, e)
+                    db.update_shot(shot["id"], failure_reason=str(e)[:500])
+                    continue
                 url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
                 db.log_cost(project_id, "video", "fal", cost, f"shot {i}")
                 # Только здесь кадр становится настоящим видео: движение по
@@ -152,7 +194,11 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 "duration": float(shot["timeline_duration"]),
                 "motion": shot.get("camera_motion"),
             }
-            if cfg.effective_video_mode == "provider" and shot.get("video_url"):
+            # Готовое настоящее видео используется всегда, каким бы ни был
+            # текущий режим. Прежнее условие требовало ещё и режима provider,
+            # и оплаченный клип молча заменялся зумом по картинке — то самое
+            # «real provider files are generated but ignored».
+            if shot.get("video_url"):
                 entry["clip_path"] = _download(shot["video_url"], work_dir / f"shot_{i:02d}_clip.mp4")
             else:
                 entry["image_path"] = _download(shot["image_url"], work_dir / f"shot_{i:02d}.png")
@@ -197,6 +243,14 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
         final_url = db.upload(f"projects/{project_id}/final.mp4", final_path.read_bytes(), "video/mp4")
         db.insert_render(project_id, final_url, final_duration)
         db.update_project(project_id, status="done", status_detail="Готово", error_message=None)
+        coverage = real_video_coverage(shots)
+        real_count = sum(1 for s in shots if s.get("generation_mode") == "real_video")
+        log.info(
+            "[%s] FINAL: %.2f с, кадров %d, настоящее видео %d (%.0f%% таймлайна), "
+            "движение по картинке %d",
+            project_id[:8], final_duration, len(shots), real_count,
+            coverage * 100, len(shots) - real_count,
+        )
         log.info("[%s] done: %s", project_id[:8], final_url)
 
     finally:
