@@ -10,7 +10,10 @@
 """
 from __future__ import annotations
 
+import logging
 import math
+
+log = logging.getLogger("worker.shot_plan")
 
 # Границы длины кадра в монтаже. Короче — глаз не успевает прочитать кадр,
 # длиннее — возвращается ощущение фотографии с зумом.
@@ -42,10 +45,96 @@ CAMERA_MOTIONS = (
 # деталь. Одинаковая крупность подряд читается как один непрерывный кадр.
 SHOT_TYPES = ("wide", "medium", "close_up", "detail")
 
-# Кадры, которым движение нужно сильнее всего: зритель решает за первые
-# секунды, и финал должен закрывать историю.
+# Лестница приоритетов: чем выше кадр, тем раньше ему достаётся дорогая
+# генерация. Зритель решает за первые секунды, а финал закрывает историю —
+# поэтому крючок и кульминация стоят выше всего.
 HOOK_PURPOSE = "hook"
 CLIMAX_PURPOSE = "climax"
+PURPOSE_IMPORTANCE: dict[str, float] = {
+    HOOK_PURPOSE: 1.00,
+    CLIMAX_PURPOSE: 0.95,
+    "action": 0.80,
+    "character": 0.70,
+    "supporting": 0.55,
+    "background": 0.35,
+}
+
+# Доля таймлайна, которую в идеале закрывает настоящее видео. Бриф: SMART —
+# около 70%, CINEMATIC — около 90% там, где это оправдано.
+COVERAGE_TARGETS: dict[str, float] = {
+    "preview": 0.0,
+    "draft": 0.35,
+    "smart": 0.70,
+    "cinematic": 0.90,
+}
+DEFAULT_MODE = "smart"
+
+REAL_VIDEO_REQUIREMENTS = ("critical", "high")
+
+
+def preferred_mode(shot: dict) -> str:
+    """Чем кадр стоит закрывать: настоящим видео или движением по картинке.
+
+    Отдельной колонки в базе нет и не нужно: `motion_requirement` ровно это и
+    означает — насколько кадру необходимо настоящее движение.
+    """
+    return (
+        "real_video"
+        if (shot.get("motion_requirement") or "normal") in REAL_VIDEO_REQUIREMENTS
+        else "image_motion"
+    )
+
+
+def assign_generation_modes(shots: list[dict], mode: str = DEFAULT_MODE) -> float:
+    """Раздать кадрам предпочтительный способ генерации под цель покрытия.
+
+    Бюджет делится не поровну: сначала настоящее видео получают самые важные
+    кадры — крючок, кульминация, действие. Низкая важность не означает
+    «поставить картинку» автоматически, она означает «уступить очередь».
+
+    Меняет кадры на месте, возвращает достигнутую долю покрытия.
+    """
+    target = COVERAGE_TARGETS.get(mode, COVERAGE_TARGETS[DEFAULT_MODE])
+    total = sum(float(s["timeline_duration"]) for s in shots)
+    if total <= 0:
+        return 0.0
+
+    for shot in shots:
+        shot["motion_requirement"] = "low"
+
+    chosen = 0.0
+    # Порядок: важность, затем место в фильме — чтобы результат не зависел
+    # от случайностей сортировки.
+    for shot in sorted(shots, key=lambda s: (-float(s["visual_importance"]), s["order_index"])):
+        if chosen >= target * total:
+            break
+        shot["motion_requirement"] = "critical" if shot["purpose"] == HOOK_PURPOSE else "high"
+        chosen += float(shot["timeline_duration"])
+
+    return round(chosen / total, 4)
+
+
+def log_plan(shots: list[dict], requested_sec: float, coverage: float) -> None:
+    """Печать плана в формате, принятом в техзадании."""
+    log.info("[SHOT PLAN]")
+    log.info("Requested duration: %.1fs", requested_sec)
+    log.info("Total shots: %d", len(shots))
+    for shot in shots:
+        log.info(
+            "Shot %02d duration=%.1f purpose=%s preferred_mode=%s importance=%s",
+            shot["order_index"] + 1,
+            float(shot["timeline_duration"]),
+            shot["purpose"].upper(),
+            preferred_mode(shot).upper(),
+            _importance_word(float(shot["visual_importance"])),
+        )
+    log.info("Planned REAL_VIDEO coverage target: %.0f%%", coverage * 100)
+
+
+def _importance_word(value: float) -> str:
+    if value >= 0.8:
+        return "high"
+    return "medium" if value >= 0.5 else "low"
 
 
 def shot_count(duration_sec: float, style: str) -> int:
@@ -117,7 +206,11 @@ def plan_scene_shots(
     # что происходит в сцене, и держит одних и тех же героев. Механика
     # остаётся запасным путём — например, в безопасном режиме.
     authored = [s for s in (authored_shots or []) if (s.get("framing") or s.get("action"))]
-    count = len(authored) or shot_count(audio_duration_sec, style)
+    # Сценарист задаёт минимум кадров, темп стиля может добавить ещё. Раньше
+    # авторское число побеждало целиком, и стиль вообще ни на что не влиял:
+    # и размеренный документальный, и быстрый продуктовый ролик резались
+    # одинаково.
+    count = max(len(authored), shot_count(audio_duration_sec, style))
     if count == 0:
         return []
     # Слишком мелкая нарезка ломает читаемость кадра.
@@ -141,14 +234,10 @@ def plan_scene_shots(
         first_of_film = is_first_scene and i == 0
         last_of_film = is_last_scene and i == count - 1
 
-        if first_of_film:
-            purpose, requirement = HOOK_PURPOSE, "critical"
-        elif last_of_film:
-            purpose, requirement = CLIMAX_PURPOSE, "high"
-        elif i == 0:
-            purpose, requirement = "establishing", "normal"
-        else:
-            purpose, requirement = "detail", "normal"
+        purpose = _purpose_for(i, count, first_of_film, last_of_film)
+        # Предпочтительный режим раздаётся позже, по всему фильму сразу:
+        # здесь ещё не видно, сколько кадров поместится в цель покрытия.
+        requirement = "normal"
 
         shots.append(
             {
@@ -166,9 +255,10 @@ def plan_scene_shots(
                 "video_prompt": (authored[i].get("action") if i < len(authored) else None) or text or narration,
                 "camera_motion": CAMERA_MOTIONS[(motion_offset + i) % len(CAMERA_MOTIONS)],
                 "motion_requirement": requirement,
-                # Важность решает, куда уйдёт дорогая генерация.
-                "visual_importance": 1.0 if first_of_film else (0.8 if last_of_film else 0.5),
-                "narrative_importance": 0.9 if (first_of_film or last_of_film) else 0.5,
+                # Важность решает, куда уйдёт дорогая генерация: по ней кадры
+                # выстраиваются в очередь за настоящим видео.
+                "visual_importance": PURPOSE_IMPORTANCE[purpose],
+                "narrative_importance": 0.9 if (first_of_film or last_of_film) else PURPOSE_IMPORTANCE[purpose],
                 # Кадры одной сцены обязаны выглядеть одним местом.
                 "continuity_group": f"scene-{scene_index}",
                 "generation_mode": "image_motion",
@@ -176,6 +266,26 @@ def plan_scene_shots(
             }
         )
     return shots
+
+
+def _purpose_for(index: int, count: int, first_of_film: bool, last_of_film: bool) -> str:
+    """Роль кадра в истории.
+
+    Первый кадр фильма — крючок, последний — кульминация. Внутри сцены первый
+    кадр ставит место действия, дальше чередуются действие и герой: именно на
+    них зритель смотрит, и именно им достаётся дорогая генерация.
+    """
+    if first_of_film:
+        return HOOK_PURPOSE
+    if last_of_film:
+        return CLIMAX_PURPOSE
+    if index == 0 and count > 1:
+        return "background"
+    # «Подпирающий» кадр имеет смысл только там, где сцена длиннее двух кадров:
+    # иначе вся сцена состоит из завязки и подпорки, а действия в ней нет.
+    if count > 2 and index == count - 1:
+        return "supporting"
+    return "action" if index % 2 else "character"
 
 
 def _shot_prompt(
@@ -208,6 +318,7 @@ def _shot_prompt(
 
 def plan_film_shots(
     scenes: list[dict], style: str = "cinematic", continuity: str = "",
+    mode: str = DEFAULT_MODE, requested_sec: float | None = None,
 ) -> list[list[dict]]:
     """Спланировать кадры всего фильма подряд.
 
@@ -230,4 +341,14 @@ def plan_film_shots(
         )
         offset += len(shots)
         plans.append(shots)
+
+    # Очередь за настоящим видео выстраивается по всему фильму сразу: внутри
+    # одной сцены не видно, сколько кадров поместится в цель покрытия.
+    flat = [s for scene_shots in plans for s in scene_shots]
+    for position, shot in enumerate(flat):
+        shot["order_index"] = position
+    coverage = assign_generation_modes(flat, mode)
+
+    total = sum(float(s["timeline_duration"]) for s in flat)
+    log_plan(flat, requested_sec if requested_sec is not None else total, coverage)
     return plans

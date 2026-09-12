@@ -121,16 +121,31 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
         media.FORMATS["9:16"] = (1080, 1920)
         cls._tmp.cleanup()
 
-    def test_provider_was_asked_for_every_shot(self) -> None:
-        self.assertEqual(len(self.calls), len(self.db.shots))
+    def test_provider_was_asked_exactly_for_the_planned_shots(self) -> None:
+        """Провайдера зовут не на все кадры, а на те, что выбрал планировщик.
 
-    def test_every_shot_is_marked_as_real_video(self) -> None:
+        Раньше настоящее видео просили для каждого кадра — это стоило бы
+        вдвое дороже цели покрытия и противоречило бы Smart Budget.
+        """
+        from steps import shot_plan
+
+        planned = [s for s in self.db.shots if shot_plan.preferred_mode(s) == "real_video"]
+        self.assertEqual(len(self.calls), len(planned))
+        self.assertLess(len(planned), len(self.db.shots), "фоновым кадрам видео не нужно")
+
+    def test_planned_shots_became_real_video(self) -> None:
+        from steps import shot_plan
+
         for shot in self.db.shots:
-            self.assertEqual(shot["generation_mode"], "real_video")
-            self.assertTrue(shot.get("video_url"), f"кадр {shot['order_index']} без клипа")
+            if shot_plan.preferred_mode(shot) == "real_video":
+                self.assertEqual(shot["generation_mode"], "real_video")
+                self.assertTrue(shot.get("video_url"), f"кадр {shot['order_index']} без клипа")
+            else:
+                self.assertEqual(shot["generation_mode"], "image_motion")
 
-    def test_coverage_is_one_hundred_percent(self) -> None:
-        self.assertEqual(pipeline.real_video_coverage(self.db.shots), 1.0)
+    def test_coverage_reaches_the_smart_target(self) -> None:
+        """Цель брифа для SMART — около 70% таймлайна настоящим видео."""
+        self.assertGreaterEqual(pipeline.real_video_coverage(self.db.shots), 0.65)
 
     def test_final_file_is_valid(self) -> None:
         check = media.validate_final(self.final, SIZE)
@@ -158,8 +173,8 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
 
     def test_paid_video_was_accounted_for(self) -> None:
         video_costs = [a for step, _, a in self.db.costs if step == "video"]
-        self.assertEqual(len(video_costs), len(self.db.shots))
-        self.assertAlmostEqual(sum(video_costs), 0.35 * len(self.db.shots), places=4)
+        self.assertEqual(len(video_costs), len(self.calls))
+        self.assertAlmostEqual(sum(video_costs), 0.35 * len(self.calls), places=4)
 
 
 class ExistingClipIsNeverReplacedTest(unittest.TestCase):

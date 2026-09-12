@@ -76,18 +76,17 @@ def test_very_short_scene_is_not_chopped_into_unreadable_pieces():
     assert shots[0]["timeline_duration"] == pytest.approx(2.4)
 
 
-def test_first_shot_of_the_film_demands_motion():
-    """Зритель решает за первые секунды: статичная заставка запрещена."""
+def test_first_shot_of_the_film_is_the_hook():
+    """Зритель решает за первые секунды — этот кадр важнее всех."""
     shots = _plan(scene_index=0, scene_count=4)
     assert shots[0]["purpose"] == shot_plan.HOOK_PURPOSE
-    assert shots[0]["motion_requirement"] == "critical"
     assert shots[0]["visual_importance"] == 1.0
 
 
 def test_last_shot_of_the_film_is_the_climax():
     shots = _plan(scene_index=3, scene_count=4)
     assert shots[-1]["purpose"] == shot_plan.CLIMAX_PURPOSE
-    assert shots[-1]["motion_requirement"] == "high"
+    assert shots[-1]["visual_importance"] == shot_plan.PURPOSE_IMPORTANCE["climax"]
 
 
 def test_neighbouring_shots_never_repeat_the_camera_move():
@@ -197,13 +196,19 @@ def test_narration_never_leaks_into_the_image_prompt():
         assert "ночь" not in s["visual_prompt"]
 
 
-def test_shots_written_by_the_scriptwriter_win_over_mechanics():
+def test_shots_written_by_the_scriptwriter_are_used():
+    """Сценарист задаёт минимум кадров, темп стиля может добавить ещё.
+
+    Раньше авторское число побеждало целиком, и стиль вообще ни на что не
+    влиял: размеренный документальный и быстрый продуктовый ролик резались
+    одинаково.
+    """
     authored = [
         {"framing": "wide establishing shot", "action": "both boys hunch over one laptop"},
         {"framing": "close-up on hands", "action": "fingers hammering the keyboard"},
     ]
     shots = _plan(duration=9.0, continuity=CAST, authored_shots=authored)
-    assert len(shots) == 2
+    assert len(shots) >= len(authored)
     assert "hunch over one laptop" in shots[0]["visual_prompt"]
     assert "fingers hammering" in shots[1]["visual_prompt"]
 
@@ -249,3 +254,133 @@ def test_authored_shots_are_split_further_when_too_long():
     for s in shots:
         assert s["timeline_duration"] <= shot_plan.MAX_SHOT_SEC + 0.001, s["timeline_duration"]
     assert abs(sum(s["timeline_duration"] for s in shots) - 17.4) < 0.001
+
+
+# --- план на 30 секунд: количество, роли, покрытие -------------------------
+
+
+def _thirty(style="cinematic", mode="smart", authored=2, duration=30.0, scenes_n=4):
+    per = duration / scenes_n
+    scenes = [
+        {"narration": "фраза " * 20, "audio_duration_sec": per, "image_prompt": f"scene {i}",
+         "shots": [{"framing": f"f{j}", "action": f"a{j}"} for j in range(authored)]}
+        for i in range(scenes_n)
+    ]
+    plans = shot_plan.plan_film_shots(scenes, style=style, mode=mode, requested_sec=duration)
+    return [s for p in plans for s in p]
+
+
+def test_thirty_second_film_has_six_to_ten_shots():
+    """Бриф: примерно 6-10 осмысленных кадров, а не пять длинных фотографий."""
+    flat = _thirty()
+    assert 6 <= len(flat) <= 10, len(flat)
+
+
+def test_every_shot_lands_in_the_readable_window():
+    for style in ("documentary", "cinematic", "explainer", "product"):
+        for s in _thirty(style=style):
+            assert 2.0 <= s["timeline_duration"] <= 5.0, (style, s["timeline_duration"])
+
+
+def test_shot_count_is_not_hardcoded_to_eight():
+    """Бриф прямо запрещает «всегда восемь кадров на любой проект»."""
+    counts = {
+        len(_thirty(style=style, duration=d))
+        for style in ("documentary", "product")
+        for d in (20.0, 30.0, 45.0)
+    }
+    assert len(counts) > 1, counts
+
+
+def test_faster_style_cuts_more_often():
+    assert len(_thirty(style="product", duration=45.0)) > len(_thirty(style="documentary", duration=45.0))
+
+
+def test_order_index_is_continuous_across_the_film():
+    """Индексы обязаны быть сквозными: по ним кадры собираются в таймлайн."""
+    flat = _thirty()
+    assert [s["order_index"] for s in flat] == list(range(len(flat)))
+
+
+def test_the_priority_ladder_is_actually_used():
+    flat = _thirty(authored=3, scenes_n=4, duration=40.0)
+    purposes = {s["purpose"] for s in flat}
+    assert shot_plan.HOOK_PURPOSE in purposes
+    assert shot_plan.CLIMAX_PURPOSE in purposes
+    assert purposes & {"action", "character"}, purposes
+    assert "background" in purposes
+
+
+def test_hook_and_climax_outrank_background():
+    flat = _thirty()
+    hook = next(s for s in flat if s["purpose"] == shot_plan.HOOK_PURPOSE)
+    climax = next(s for s in flat if s["purpose"] == shot_plan.CLIMAX_PURPOSE)
+    background = [s for s in flat if s["purpose"] == "background"]
+    assert background, "фоновых кадров не оказалось"
+    for low in background:
+        assert hook["visual_importance"] > low["visual_importance"]
+        assert climax["visual_importance"] > low["visual_importance"]
+
+
+def _coverage(flat):
+    total = sum(s["timeline_duration"] for s in flat)
+    real = sum(s["timeline_duration"] for s in flat if shot_plan.preferred_mode(s) == "real_video")
+    return real / total
+
+
+def test_smart_mode_aims_at_seventy_percent_real_video():
+    """Цель брифа для SMART — около 70% таймлайна настоящим видео."""
+    assert 0.65 <= _coverage(_thirty(mode="smart")) <= 0.80
+
+
+def test_cinematic_mode_aims_higher_and_preview_asks_for_nothing():
+    assert _coverage(_thirty(mode="cinematic")) >= 0.85
+    assert _coverage(_thirty(mode="preview")) == 0.0
+
+
+def test_the_hook_is_always_first_in_the_queue_for_real_video():
+    """Статичная заставка в первых секундах запрещена брифом."""
+    for mode in ("draft", "smart", "cinematic"):
+        flat = _thirty(mode=mode)
+        hook = next(s for s in flat if s["purpose"] == shot_plan.HOOK_PURPOSE)
+        assert shot_plan.preferred_mode(hook) == "real_video", mode
+
+
+def test_expensive_generation_goes_to_important_shots_first():
+    """Бюджет делится не поровну: дорогое достаётся тому, что заметят."""
+    flat = _thirty(mode="draft")
+    chosen = [s for s in flat if shot_plan.preferred_mode(s) == "real_video"]
+    skipped = [s for s in flat if shot_plan.preferred_mode(s) == "image_motion"]
+    assert chosen and skipped
+    assert min(s["visual_importance"] for s in chosen) >= max(s["visual_importance"] for s in skipped)
+
+
+def test_planning_never_marks_a_shot_as_already_generated():
+    """План — это намерение. Настоящим видео кадр становится только у провайдера."""
+    for s in _thirty(mode="cinematic"):
+        assert s["generation_mode"] == "image_motion"
+
+
+def test_plan_rows_still_fit_the_shots_table():
+    allowed = {
+        "order_index", "purpose", "shot_type", "timeline_duration", "generation_duration",
+        "visual_prompt", "video_prompt", "camera_motion", "motion_requirement",
+        "visual_importance", "narrative_importance", "continuity_group",
+        "generation_mode", "status",
+    }
+    for s in _thirty():
+        assert set(s) <= allowed, set(s) - allowed
+
+
+def test_plan_is_logged_in_the_agreed_format(caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="worker.shot_plan"):
+        _thirty()
+    text = caplog.text
+    assert "[SHOT PLAN]" in text
+    assert "Requested duration: 30.0s" in text
+    assert "Total shots:" in text
+    assert "purpose=HOOK" in text
+    assert "preferred_mode=REAL_VIDEO" in text
+    assert "Planned REAL_VIDEO coverage target:" in text

@@ -31,15 +31,14 @@ def _download(url: str, dest: Path) -> Path:
     return dest
 
 
-# Кадры, которым настоящее движение нужно в первую очередь. Низкая важность
-# НЕ означает «поставить картинку»: она означает «взять видео подешевле»,
-# а движение по картинке остаётся последним средством.
-REAL_VIDEO_REQUIREMENTS = ("critical", "high", "normal")
-
-
 def _wants_real_video(shot: dict) -> bool:
-    """Нужно ли этому кадру настоящее видео."""
-    return (shot.get("motion_requirement") or "normal") in REAL_VIDEO_REQUIREMENTS
+    """Нужно ли этому кадру настоящее видео.
+
+    Решение принято планировщиком: он один видит весь фильм и знает, сколько
+    кадров помещается в цель покрытия. Дублировать правило здесь — значит
+    получить два разных ответа на один вопрос.
+    """
+    return shot_plan.preferred_mode(shot) == "real_video"
 
 
 def real_video_coverage(shots: list[dict]) -> float:
