@@ -142,6 +142,9 @@ class Db:
         res = self.client.table("project_references").insert(rows).execute()
         return res.data
 
+    def update_reference(self, reference_id: str, **fields: Any) -> None:
+        self.client.table("project_references").update(fields).eq("id", reference_id).execute()
+
     def primary_reference(self, project_id: str) -> dict[str, Any] | None:
         """Канонический вид товара — с него начинается режим «фото → видео».
 

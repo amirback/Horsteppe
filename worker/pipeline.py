@@ -18,6 +18,7 @@ import budget
 import media
 import product_brief
 import quality
+import references as references_mod
 import safe_mode
 from config import COSTS, TMP_DIR, Config
 import db as db_module
@@ -171,6 +172,54 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
 
 
 
+
+# Метка готового снимка в имени файла. Отдельной колонки для этого не нужно:
+# повторный запуск проекта должен видеть, что работа уже сделана, а лишний
+# столбец ради одного булева значения — это миграция на ровном месте.
+READY_MARK = "_ready"
+
+
+def _prepare_references(db: Db, project_id: str, rows: list[dict], work_dir: Path) -> list[dict]:
+    """Привести снимки пользователя к рабочему виду — один раз за проект.
+
+    Поворот по EXIF здесь не формальность: телефон пишет ориентацию в
+    метаданные, и без этого шага товар уезжает боком, причём молча.
+
+    Снимок, который не удалось обработать, остаётся исходным: отказываться от
+    заказа из-за неудачного поворота было бы хуже, чем собрать ролик из
+    оригинала.
+    """
+    prepared = []
+    for row in rows:
+        order = int(row.get("order_index") or 0)
+        if READY_MARK in Path(row.get("storage_path") or "").stem:
+            prepared.append(row)
+            continue
+        try:
+            source = _download(row["public_url"], work_dir / f"ref_src_{order:02d}")
+            info = references_mod.normalize(
+                source, work_dir, f"ref_{order:02d}{READY_MARK}", row.get("mime_type") or "image/jpeg"
+            )
+        except Exception as e:  # noqa: BLE001 — исходник лучше отказа
+            log.warning("[%s] снимок %d не удалось подготовить: %s", project_id[:8], order, e)
+            prepared.append(row)
+            continue
+
+        ready: Path = info["path"]
+        destination = f"projects/{project_id}/references/{order:02d}{READY_MARK}{ready.suffix}"
+        url = db.upload(destination, ready.read_bytes(), info["mime_type"])
+        db.update_reference(
+            row["id"], public_url=url, storage_path=destination,
+            width=info["width"], height=info["height"],
+        )
+        row = {**row, "public_url": url, "storage_path": destination,
+               "width": info["width"], "height": info["height"], "note": info["note"]}
+        if info["note"]:
+            log.warning("[%s] снимок %d: %s", project_id[:8], order, info["note"])
+        prepared.append(row)
+    return prepared
+
+
 def _render_plan(shots: list[dict], scenes: list[dict], work_dir) -> list[dict]:
     """Собрать задание монтажу из текущих решений по кадрам.
 
@@ -312,9 +361,13 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
     # работает как раньше.
     project_type = project.get("project_type") or "general_video"
     references = db.get_references(project_id) if project_type != "general_video" else []
-    reference_urls = [r["public_url"] for r in references]
 
     try:
+        if references:
+            db.set_progress(project_id, "Готовим фотографии…")
+            references = _prepare_references(db, project_id, references, work_dir)
+        reference_urls = [r["public_url"] for r in references]
+
         if project_type == "image_to_video":
             primary = db_module.primary_of(references)
             if primary is None:

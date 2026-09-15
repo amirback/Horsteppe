@@ -51,6 +51,13 @@ class ReferenceDb(FakeDb):
     def get_references(self, project_id: str) -> list[dict[str, Any]]:
         return self.references
 
+    def update_reference(self, reference_id: str, **fields: Any) -> None:
+        for row in self.references:
+            if row["id"] == reference_id:
+                row.update(fields)
+                return
+        raise AssertionError(f"снимок {reference_id} не найден")
+
 
 def local_download(url: str, dest: Path) -> Path:
     """Заглушка сети: file:// вместо http. Продакшен ходит по https."""
@@ -174,12 +181,22 @@ class TestProductAd(ModeSetup, unittest.TestCase):
         self.assertIn("hook", purposes)
         self.assertTrue(self.db.scenes, "сцены рекламы должны существовать")
 
+    @property
+    def prepared_url(self) -> str:
+        """Снимок после поворота по EXIF и подгонки размера — именно он идёт в дело."""
+        return self.db.references[0]["public_url"]
+
+    def test_photo_was_prepared_before_use(self) -> None:
+        row = self.db.references[0]
+        self.assertIn("_ready", row["storage_path"])
+        self.assertNotEqual(row["public_url"], self.reference_url)
+
     def test_product_shots_use_the_real_photo(self) -> None:
         """Ключевая проверка вехи: товар в кадре — снимок человека."""
         product_shots = [s for s in self.db.shots if s.get("first_frame_reference")]
         self.assertTrue(product_shots, "ни один кадр не получил снимок товара")
         for shot in product_shots:
-            self.assertEqual(shot["image_url"], self.reference_url)
+            self.assertEqual(shot["image_url"], self.prepared_url)
 
     def test_the_photo_was_never_regenerated(self) -> None:
         """Генератор картинок не должен рисовать «похожий товар»."""
@@ -190,7 +207,7 @@ class TestProductAd(ModeSetup, unittest.TestCase):
         )
 
     def test_provider_animated_the_product_photo(self) -> None:
-        self.assertIn(self.reference_url, self.animated)
+        self.assertIn(self.prepared_url, self.animated)
 
     def test_product_shot_went_first_in_the_queue_for_real_video(self) -> None:
         product_shots = [s for s in self.db.shots if s.get("first_frame_reference")]
@@ -235,7 +252,7 @@ class TestAnimatePhoto(ModeSetup, unittest.TestCase):
 
     def test_every_clip_came_from_the_uploaded_photo(self) -> None:
         self.assertTrue(self.animated)
-        self.assertEqual(set(self.animated), {self.reference_url})
+        self.assertEqual(set(self.animated), {self.db.references[0]["public_url"]})
 
     def test_requested_length_is_covered_by_real_clips(self) -> None:
         self.assertEqual(pipeline.real_video_coverage(self.db.shots), 1.0)

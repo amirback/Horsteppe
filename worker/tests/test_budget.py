@@ -222,7 +222,14 @@ class TestPipelineRespectsTheCeiling(unittest.TestCase):
         cls._tmp.cleanup()
 
     def test_project_finished_despite_running_out_of_money(self) -> None:
-        self.assertEqual(self.db.project["status"], "done")
+        """Ролик собран — но результат назван своим именем.
+
+        Раньше здесь ожидался статус «Готово». Это была слабая проверка:
+        ролик, где на настоящее видео не хватило денег, выглядел таким же
+        успехом, как полностью оплаченный (ТЗ §32).
+        """
+        self.assertEqual(self.db.project["status"], "done_degraded")
+        self.assertIn("Бюджета", self.db.project["degraded_reason"])
         self.assertTrue(self.db.renders, "ролик должен быть собран")
 
     def test_only_what_the_ceiling_allowed_was_paid_for(self) -> None:

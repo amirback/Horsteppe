@@ -42,6 +42,44 @@ export async function GET() {
   });
 }
 const FORMATS = ["9:16", "16:9", "1:1", "4:5"];
+const PROJECT_TYPES = ["general_video", "product_ad", "image_to_video"];
+const BUCKET = "media";
+const MAX_REFERENCES = 5;
+// Потолок расходов задаёт человек, но сверху он ограничен и здесь: опечатка
+// в поле ввода не должна превращаться в счёт на тысячу долларов.
+const MAX_BUDGET_USD = 20;
+
+type StagedFile = {
+  path: string;
+  mime_type: string;
+  width: number;
+  height: number;
+  bytes: number;
+};
+
+/**
+ * Файлы приходят из /api/uploads и лежат в личном отстойнике. Путь — это
+ * данные от клиента, поэтому проверяется, что он ведёт в отстойник именно
+ * этого человека: иначе чужой снимок можно было бы прицепить к своему проекту.
+ */
+function ownStagedFiles(raw: unknown, userId: string): StagedFile[] | null {
+  if (!Array.isArray(raw)) return [];
+  if (raw.length > MAX_REFERENCES) return null;
+  const prefix = `staging/${userId}/`;
+  const files: StagedFile[] = [];
+  for (const item of raw) {
+    const path = typeof item?.path === "string" ? item.path : "";
+    if (!path.startsWith(prefix) || path.includes("..")) return null;
+    files.push({
+      path,
+      mime_type: typeof item?.mime_type === "string" ? item.mime_type : "image/jpeg",
+      width: Number(item?.width) || 0,
+      height: Number(item?.height) || 0,
+      bytes: Number(item?.bytes) || 0,
+    });
+  }
+  return files;
+}
 
 /**
  * Постановка проекта в производство.
@@ -67,6 +105,10 @@ export async function POST(request: Request) {
     style?: string;
     duration_sec?: number;
     aspect_ratio?: string;
+    project_type?: string;
+    brief?: Record<string, unknown>;
+    max_budget_usd?: number;
+    references?: unknown;
   };
   try {
     body = await request.json();
@@ -80,6 +122,34 @@ export async function POST(request: Request) {
   }
   if (topic.length > 500) {
     return NextResponse.json({ error: "topic_too_long" }, { status: 400 });
+  }
+
+  const projectType = PROJECT_TYPES.includes(body.project_type ?? "")
+    ? body.project_type!
+    : "general_video";
+
+  const staged = ownStagedFiles(body.references, user.id);
+  if (staged === null) {
+    return NextResponse.json({ error: "invalid_references" }, { status: 400 });
+  }
+
+  // Требования режимов. Реклама без названия товара и оживление без снимка —
+  // это не «почти готовый заказ», а заказ, который нечем выполнить.
+  const brief = (body.brief ?? {}) as Record<string, unknown>;
+  if (projectType === "product_ad" && !String(brief.product_name ?? "").trim()) {
+    return NextResponse.json({ error: "product_name_required" }, { status: 400 });
+  }
+  if (projectType === "image_to_video" && staged.length === 0) {
+    return NextResponse.json({ error: "photo_required" }, { status: 400 });
+  }
+
+  let maxBudget: number | null = null;
+  if (body.max_budget_usd !== undefined && body.max_budget_usd !== null) {
+    const value = Number(body.max_budget_usd);
+    if (!Number.isFinite(value) || value < 0 || value > MAX_BUDGET_USD) {
+      return NextResponse.json({ error: "invalid_budget", limit: MAX_BUDGET_USD }, { status: 400 });
+    }
+    maxBudget = value;
   }
 
   const style = STYLES.includes(body.style ?? "") ? body.style! : "cinematic";
@@ -123,6 +193,9 @@ export async function POST(request: Request) {
       style,
       duration_sec: duration,
       aspect_ratio: aspect,
+      project_type: projectType,
+      brief,
+      max_budget_usd: maxBudget,
       status: "queued",
       status_detail: "В очереди…",
     })
@@ -131,6 +204,44 @@ export async function POST(request: Request) {
   if (projectError || !project) {
     console.error("project insert failed:", projectError?.message);
     return NextResponse.json({ error: "create_failed" }, { status: 500 });
+  }
+
+  // Снимки переезжают из отстойника в каталог проекта только теперь, когда
+  // проект существует. Публичная ссылка нужна потому, что её получает
+  // провайдер image-to-video: подписанная ссылка истекает раньше, чем
+  // заканчивается генерация.
+  if (staged.length > 0) {
+    const rows = [];
+    for (const [index, file] of staged.entries()) {
+      const ext = file.path.split(".").pop() || "jpg";
+      const destination = `projects/${project.id}/references/${index}.${ext}`;
+      const { error: moveError } = await admin.storage.from(BUCKET).move(file.path, destination);
+      if (moveError) {
+        console.error("reference move failed:", moveError.message);
+        await admin
+          .from("projects")
+          .update({ status: "failed", error_message: "Не удалось сохранить фотографии" })
+          .eq("id", project.id);
+        return NextResponse.json({ error: "reference_move_failed" }, { status: 500 });
+      }
+      const { data: published } = admin.storage.from(BUCKET).getPublicUrl(destination);
+      rows.push({
+        project_id: project.id,
+        order_index: index,
+        is_primary: index === 0,
+        storage_path: destination,
+        public_url: published.publicUrl,
+        mime_type: file.mime_type,
+        width: file.width,
+        height: file.height,
+        bytes: file.bytes,
+      });
+    }
+    const { error: referenceError } = await admin.from("project_references").insert(rows);
+    if (referenceError) {
+      console.error("reference insert failed:", referenceError.message);
+      return NextResponse.json({ error: "reference_save_failed" }, { status: 500 });
+    }
   }
 
   const { error: jobError } = await admin.from("jobs").insert({ project_id: project.id });
