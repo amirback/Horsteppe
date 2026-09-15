@@ -17,6 +17,7 @@ import httpx
 import budget
 import media
 import product_brief
+import quality
 import safe_mode
 from config import COSTS, TMP_DIR, Config
 import db as db_module
@@ -167,6 +168,134 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
     coverage = real_video_coverage(shots)
     log.info("[%s] FINAL: %.2f с, клипов %d, настоящее видео %.0f%%",
              project_id[:8], check["duration_sec"], len(shots), coverage * 100)
+
+
+
+def _render_plan(shots: list[dict], scenes: list[dict], work_dir) -> list[dict]:
+    """Собрать задание монтажу из текущих решений по кадрам.
+
+    Вынесено отдельно, потому что после починки план строится заново: решения
+    изменились, а скачанные ассеты — нет.
+    """
+    by_scene: dict[str, list[dict]] = {}
+    for i, shot in enumerate(shots):
+        entry = {
+            "duration": float(shot["timeline_duration"]),
+            "motion": shot.get("camera_motion"),
+        }
+        # Готовое настоящее видео используется всегда, каким бы ни был текущий
+        # режим. Прежнее условие требовало ещё и режима provider, и оплаченный
+        # клип молча заменялся зумом по картинке — то самое «real provider
+        # files are generated but ignored».
+        if shot.get("video_url"):
+            entry["clip_path"] = _download(shot["video_url"], work_dir / f"shot_{i:02d}_clip.mp4")
+        else:
+            entry["image_path"] = _download(shot["image_url"], work_dir / f"shot_{i:02d}.png")
+        by_scene.setdefault(shot["scene_id"], []).append(entry)
+
+    plan = []
+    for i, scene in enumerate(scenes):
+        plan.append({
+            "audio_path": _download(scene["audio_url"], work_dir / f"scene_{i:02d}.mp3"),
+            "audio_duration": scene["audio_duration_sec"],
+            "narration": scene.get("narration", ""),
+            "shots": by_scene.get(scene["id"], []),
+        })
+    return plan
+
+
+
+# Жёсткий потолок кругов починки (ТЗ §25). Больше двух — это уже не починка,
+# а бесконечная пересборка за счёт человека.
+MAX_REPAIR_ROUNDS = 2
+
+# Чем заменить движение, которое не спасло кадр. Панорама заметнее наезда:
+# наезд на однотонной картинке почти не читается.
+LIVELIER_MOTION = {
+    "push_in": "pan_right",
+    "pull_out": "pan_left",
+    "tilt_up": "pan_right",
+    "tilt_down": "pan_left",
+    "pan_right": "push_in",
+    "pan_left": "pull_out",
+}
+
+
+def _fresh_motion(shots: list[dict], shot: dict) -> str:
+    """Новое движение кадра — заметнее прежнего и не такое, как у соседей.
+
+    Соседи важны не меньше заметности: два одинаковых движения подряд
+    склеиваются в один длинный кадр, и починка одного дефекта создала бы
+    другой. Это ровно то, что поймал сквозной тест.
+    """
+    index = shots.index(shot)
+    taken = {
+        (shots[i].get("camera_motion") or "")
+        for i in (index - 1, index + 1)
+        if 0 <= i < len(shots)
+    }
+    current = shot.get("camera_motion") or ""
+    preferred = LIVELIER_MOTION.get(current, "pan_right")
+    for candidate in (preferred, *shot_plan.CAMERA_MOTIONS):
+        if candidate != current and candidate not in taken:
+            return candidate
+    return preferred
+
+
+def _repair_shots(db: Db, shots: list[dict], report, project_id: str) -> int:
+    """Починить только те кадры, на которые указал инспектор.
+
+    Перегенерировать весь фильм из-за одного замершего кадра запрещено (§25):
+    это дорого, долго и портит то, что уже получилось. Каждый кадр чинится
+    не больше одного раза за круг — иначе цикл никогда не сойдётся.
+    """
+    by_id = {s.get("id"): s for s in shots}
+    fixed = 0
+    for issue in report.repairable:
+        shot = by_id.get(issue.shot_id)
+        if shot is None or int(shot.get("retry_count") or 0) >= MAX_REPAIR_ROUNDS:
+            continue
+
+        if issue.kind in ("FROZEN_VIDEO", "STATIC_OPENING"):
+            if shot.get("video_url"):
+                # Провайдер вернул застывший клип. Честный выход — отказаться
+                # от него: движение по фотографии хотя бы движется, а покрытие
+                # упадёт и об этом будет сказано.
+                db.update_shot(
+                    shot["id"], video_url=None, generation_mode="image_motion",
+                    retry_count=int(shot.get("retry_count") or 0) + 1,
+                    failure_reason=f"клип замер на {issue.at_sec or 0:.1f} с, заменён движением камеры",
+                )
+                shot.update(video_url=None, generation_mode="image_motion")
+            else:
+                new_motion = _fresh_motion(shots, shot)
+                db.update_shot(
+                    shot["id"], camera_motion=new_motion,
+                    retry_count=int(shot.get("retry_count") or 0) + 1,
+                )
+                shot.update(camera_motion=new_motion)
+            shot["retry_count"] = int(shot.get("retry_count") or 0) + 1
+            fixed += 1
+            log.info("[REPAIR] [%s] кадр %s: %s",
+                     project_id[:8], str(issue.shot_id)[:8], issue.kind)
+
+    if fixed:
+        log.info("[REPAIR] починено кадров: %d", fixed)
+    return fixed
+
+
+def _degraded_reason(cfg: Config, shots: list[dict], coverage: float, target: float) -> str | None:
+    """Почему ролик не дотянул до цели. None — дотянул."""
+    if coverage + 1e-6 >= target:
+        return None
+    if not safe_mode.is_paid_video_allowed(cfg):
+        return "Настоящее видео отключено в этом режиме — движение сделано камерой по кадру."
+    denied = [s for s in shots if s.get("failure_reason")]
+    if any("потолк" in (s.get("failure_reason") or "").lower() for s in denied):
+        return "Бюджета хватило не на все кадры — часть осталась движением камеры."
+    if denied:
+        return "Провайдер видео ответил отказом на часть кадров."
+    return "Настоящим видео закрыта меньшая часть ролика, чем планировалось."
 
 
 def run_project(cfg: Config, db: Db, project_id: str) -> None:
@@ -342,62 +471,76 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
 
         # ---- 6. Render: make sure all assets are local (retries may start cold)
         db.set_progress(project_id, "Монтаж…")
-        by_scene: dict[str, list[dict]] = {}
-        for i, shot in enumerate(shots):
-            entry = {
-                "duration": float(shot["timeline_duration"]),
-                "motion": shot.get("camera_motion"),
-            }
-            # Готовое настоящее видео используется всегда, каким бы ни был
-            # текущий режим. Прежнее условие требовало ещё и режима provider,
-            # и оплаченный клип молча заменялся зумом по картинке — то самое
-            # «real provider files are generated but ignored».
-            if shot.get("video_url"):
-                entry["clip_path"] = _download(shot["video_url"], work_dir / f"shot_{i:02d}_clip.mp4")
-            else:
-                entry["image_path"] = _download(shot["image_url"], work_dir / f"shot_{i:02d}.png")
-            by_scene.setdefault(shot["scene_id"], []).append(entry)
-
-        render_scenes = []
-        for i, scene in enumerate(scenes):
-            audio_path = _download(scene["audio_url"], work_dir / f"scene_{i:02d}.mp3")
-            render_scenes.append({
-                "audio_path": audio_path,
-                "audio_duration": scene["audio_duration_sec"],
-                "narration": scene.get("narration", ""),
-                "shots": by_scene.get(scene["id"], []),
-            })
+        render_scenes = _render_plan(shots, scenes, work_dir)
 
         aspect = project.get("aspect_ratio") or cfg.video_format
-        final_path = render_step.render_final(
-            render_scenes,
-            work_dir,
-            music_file=cfg.music_file or None,
-            aspect=aspect,
-            transition_sec=cfg.transition_sec,
-            subtitles=cfg.subtitles,
-        )
+        size = media.frame_size(aspect)
+        target = shot_plan.COVERAGE_TARGETS.get(
+            shot_plan.DEFAULT_MODE, 0.0
+        ) if safe_mode.is_paid_video_allowed(cfg) else 0.0
 
-        # ---- 6. Проверка результата до отдачи пользователю.
-        # Длительности мало: чёрное видео нужной длины с тишиной её проходит.
-        db.set_progress(project_id, "Проверка результата…")
-        check = media.validate_final(final_path, media.frame_size(aspect))
-        for warning in check["warnings"]:
-            log.warning("[%s] качество: %s", project_id[:8], warning)
-        if not check["ok"]:
-            raise RuntimeError("Проверка финального файла не пройдена: " + "; ".join(check["errors"]))
-        final_duration = check["duration_sec"]
-        log.info(
-            "[%s] проверка пройдена: %.3f с, %dx%d, звук %s, яркость %.1f, пик %.1f dB",
-            project_id[:8], final_duration, check["width"], check["height"],
-            "есть" if check["has_audio"] else "нет", check["brightness"], check["peak_db"],
-        )
+        # ---- 6. Первая сборка → проверка → починка только плохих кадров.
+        # Проверка длительности и потоков мало что значит: чёрное видео нужной
+        # длины с тишиной её проходит, и слайдшоу проходит тоже.
+        for attempt in range(MAX_REPAIR_ROUNDS + 1):
+            final_path = render_step.render_final(
+                render_scenes,
+                work_dir,
+                music_file=cfg.music_file or None,
+                aspect=aspect,
+                transition_sec=cfg.transition_sec,
+                subtitles=cfg.subtitles,
+            )
+            db.set_progress(project_id, "Проверка результата…")
+            report = quality.inspect(
+                final_path, size, shots,
+                requested_sec=float(project.get("duration_sec") or 0) or None,
+                coverage_target=target,
+            )
+            if not report.ok:
+                raise RuntimeError(
+                    "Проверка финального файла не пройдена: "
+                    + "; ".join(str(i) for i in report.errors)
+                )
+            if attempt == MAX_REPAIR_ROUNDS or not report.repairable:
+                break
+            if cfg.mvp_safe_mode:
+                # Кадр-заглушка однотонный: двигать в нём нечего, и любое
+                # измерение движения покажет ноль. Чинить нечего — вторая
+                # сборка потратила бы минуты и вернула тот же результат.
+                log.info("[REPAIR] безопасный режим: измерять движение на заглушках нечем")
+                break
+            db.set_progress(project_id, f"Починка кадров (круг {attempt + 1})…")
+            if not _repair_shots(db, shots, report, project_id):
+                break
+            # Пересобирать нужно из тех же ассетов, но с новыми решениями по
+            # кадрам: заново скачивать и генерировать ничего не надо.
+            render_scenes = _render_plan(shots, scenes, work_dir)
+
+        final_duration = report.duration_sec
 
         db.set_progress(project_id, "Загрузка результата…")
         final_url = db.upload(f"projects/{project_id}/final.mp4", final_path.read_bytes(), "video/mp4")
         db.insert_render(project_id, final_url, final_duration)
-        db.update_project(project_id, status="done", status_detail="Готово", error_message=None)
         coverage = real_video_coverage(shots)
+        reason = _degraded_reason(cfg, shots, coverage, target)
+        # Ролик ниже цели по настоящему движению — готов, играется, но
+        # выдавать его за чистый успех нельзя (ТЗ §32).
+        db.update_project(
+            project_id,
+            status="done_degraded" if reason else "done",
+            status_detail="Готово" if not reason else "Готово с оговоркой",
+            error_message=None,
+            real_video_coverage=coverage,
+            degraded_reason=reason,
+            quality={
+                "duration_sec": round(report.duration_sec, 2),
+                "weak_motion_ratio": report.weak_motion_ratio,
+                "opening_motion": report.opening_motion,
+                "frozen_sections": len(report.frozen_sections),
+                "issues": [str(i) for i in report.issues][:10],
+            },
+        )
         real_count = sum(1 for s in shots if s.get("generation_mode") == "real_video")
         log.info(
             "[%s] FINAL: %.2f с, кадров %d, настоящее видео %d (%.0f%% таймлайна), "
