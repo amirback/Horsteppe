@@ -98,10 +98,40 @@ def media_duration_sec(path: Path) -> float:
 
 # --------------------------------------------------------------- сегменты --
 
-_ENCODE = [
-    "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+# Промежуточный сегмент внутри сборки пересжимается ещё два-три раза: кадр →
+# сцена → склейка сцен → вшивание субтитров. Ошибка каждого сжатия
+# складывается, и к финалу картинка мягче, чем была у провайдера.
+#
+# Замер на мелкой фактуре, три пересжатия подряд, сравнение с исходником:
+#
+#   прежние настройки  crf 20 / medium    39.42 дБ
+#   crf 16 / veryfast                     38.65 дБ   ← быстрый пресет ХУЖЕ
+#   crf 16 / fast                         42.62 дБ
+#   crf 14 / fast                         44.19 дБ   ← взято
+#
+# Вывод, который стоило измерить:низкий CRF сам по себе не спасает — на
+# `veryfast` кодек экономит на решениях, и запас качества уходит впустую.
+_ENCODE_INTERMEDIATE = [
+    "-c:v", "libx264", "-preset", "fast", "-crf", "14",
     "-pix_fmt", "yuv420p",
 ]
+
+# Последнее сжатие — то, что скачает зритель. Здесь важен вес файла, а не
+# скорость сборки: `medium` даёт лучшую картинку на том же битрейте.
+# `+faststart` переносит индекс в начало файла; без него браузер начинает
+# проигрывание только после полной загрузки (ТЗ §26).
+_ENCODE_FINAL = [
+    "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+]
+
+# Имя, под которым настройки использовались до разделения профилей.
+_ENCODE = _ENCODE_INTERMEDIATE
+
+
+def _encode(final: bool) -> list[str]:
+    """Профиль сжатия. Ровно один шаг сборки — последний — работает с `final`."""
+    return _ENCODE_FINAL if final else _ENCODE_INTERMEDIATE
 
 
 # Насколько сильно кадр наезжает или отъезжает. Меньше — незаметно, больше —
@@ -202,7 +232,7 @@ def make_clip_segment(
 # ------------------------------------------------------------- соединение --
 
 
-def concat_segments(segments: list[Path], out: Path) -> None:
+def concat_segments(segments: list[Path], out: Path, final: bool = False) -> None:
     """Join segments with hard cuts.
 
     Перекодирование здесь обязательно. Раньше склейка шла через `-c copy`, и
@@ -218,13 +248,14 @@ def concat_segments(segments: list[Path], out: Path) -> None:
     list_file.write_text("\n".join(lines), encoding="utf-8")
     run_ffmpeg([
         "-f", "concat", "-safe", "0", "-i", str(list_file),
-        "-vf", f"fps={FPS},format=yuv420p", *_ENCODE, "-an", str(out),
+        "-vf", f"fps={FPS},format=yuv420p", *_encode(final), "-an", str(out),
     ])
     list_file.unlink(missing_ok=True)
 
 
 def concat_with_transitions(
-    segments: list[Path], out: Path, scene_durations: list[float], transition: float
+    segments: list[Path], out: Path, scene_durations: list[float], transition: float,
+    final: bool = False,
 ) -> None:
     """Join segments with crossfades.
 
@@ -234,7 +265,12 @@ def concat_with_transitions(
     drifts away from the voice track.
     """
     if len(segments) == 1:
-        run_ffmpeg(["-i", str(segments[0]), "-c", "copy", str(out)])
+        # Один сегмент нечего склеивать. Но если это последний шаг сборки,
+        # копия унесла бы в прод промежуточный профиль — и вес файла.
+        if final:
+            run_ffmpeg(["-i", str(segments[0]), *_ENCODE_FINAL, "-an", str(out)])
+        else:
+            run_ffmpeg(["-i", str(segments[0]), "-c", "copy", str(out)])
         return
 
     inputs: list[str] = []
@@ -255,7 +291,7 @@ def concat_with_transitions(
 
     run_ffmpeg(
         [*inputs, "-filter_complex", ";".join(steps), "-map", f"[{label}]",
-         *_ENCODE, "-an", str(out)]
+         *_encode(final), "-an", str(out)]
     )
 
 
@@ -283,7 +319,7 @@ def mux(video: Path, audio: Path, out: Path, duration: float | None = None) -> N
     run_ffmpeg(
         ["-i", str(video), "-i", str(audio), "-map", "0:v:0", "-map", "1:a:0",
          "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
-         *trim, str(out)]
+         "-movflags", "+faststart", *trim, str(out)]
     )
 
 
@@ -295,7 +331,8 @@ def mix_music(video: Path, music: Path, out: Path, music_volume: float = 0.15) -
          f"[1:a]volume={music_volume}[m];"
          f"[0:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]",
          "-map", "0:v:0", "-map", "[a]", "-c:v", "copy",
-         "-c:a", "aac", "-b:a", "160k", "-ar", "44100", "-shortest", str(out)]
+         "-c:a", "aac", "-b:a", "160k", "-ar", "44100",
+         "-movflags", "+faststart", "-shortest", str(out)]
     )
 
 
@@ -458,7 +495,7 @@ def resolve_font() -> tuple[Path | None, str | None]:
     return None, None
 
 
-def burn_subtitles(video: Path, ass: Path, out: Path) -> None:
+def burn_subtitles(video: Path, ass: Path, out: Path, final: bool = True) -> None:
     """Burn the ASS subtitles into the picture.
 
     The subtitle path is passed as a bare filename with cwd set to its
@@ -470,7 +507,8 @@ def burn_subtitles(video: Path, ass: Path, out: Path) -> None:
     if fontsdir:
         subs += f":fontsdir='{fontsdir}'"
     run_ffmpeg(
-        ["-i", str(video.resolve()), "-vf", subs, *_ENCODE, "-c:a", "copy", str(out.resolve())],
+        ["-i", str(video.resolve()), "-vf", subs, *_encode(final), "-c:a", "copy",
+         str(out.resolve())],
         cwd=ass.parent,
     )
 

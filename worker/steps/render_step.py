@@ -123,11 +123,16 @@ def render_final(
     media.concat_audio([Path(s["audio_path"]) for s in scenes], voice)
 
     # 3. склейка картинки
+    # Профиль сжатия достаётся последнему видеопроходу сборки. Когда субтитры
+    # включены, последний проход — вшивание; без них склейка и есть финал.
     picture = work_dir / "picture.mp4"
+    last_video_pass = not subtitles
     if transition > 0:
-        media.concat_with_transitions(segments, picture, durations, transition)
+        media.concat_with_transitions(
+            segments, picture, durations, transition, final=last_video_pass
+        )
     else:
-        media.concat_segments(segments, picture)
+        media.concat_segments(segments, picture, final=last_video_pass)
 
     # 4. картинка + голос; -shortest отсекает запасной хвост последней сцены,
     #    поэтому итоговая длина равна длине озвучки
