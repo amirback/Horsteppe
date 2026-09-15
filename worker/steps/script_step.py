@@ -146,6 +146,8 @@ def _mock_script(topic: str, style: str, duration_sec: int) -> dict:
         "continuity": f"Test cast and world for '{short_topic}', {style} look, consistent palette",
         "scenes": scenes,
         "cost_usd": 0.0,
+        "provider": "mock",
+        "model": "template",
     }
 
 
@@ -178,6 +180,8 @@ def _mock_ad_script(brief, style: str, duration_sec: int) -> dict:
                       f"packaging in every shot; consistent palette and lighting",
         "scenes": scenes,
         "cost_usd": 0.0,
+        "provider": "mock",
+        "model": "template",
     }
 
 
@@ -230,21 +234,54 @@ Requirements:
 
 
 def _run(cfg: Config, prompt: str, schema: dict, n: int, words_per_scene: int, title: str) -> dict:
-    """Общий хвост обоих режиссёров: вызов провайдера, проверка, подгонка длины."""
-    if cfg.llm_provider == "openrouter":
-        data, cost = _via_openrouter(cfg, prompt, schema)
-    else:
-        data, cost = _via_anthropic(cfg, prompt, schema)
+    """Общий хвост обоих режиссёров: цепочка провайдеров, проверка, длина.
 
-    scenes = _validate(data, n)
-    scenes = _clamp_narration(scenes, words_per_scene)
-    log.info("script: %d сцен, провайдер %s, стоимость $%.4f", len(scenes), cfg.llm_provider, cost)
-    return {
-        "title": data.get("title", title),
-        "continuity": (data.get("continuity") or "").strip(),
-        "scenes": scenes,
-        "cost_usd": cost,
-    }
+    Провайдеры пробуются по очереди, как у кадров. Один провайдер — одна
+    точка отказа: OpenRouter уже отвечал и 429, и пустым ответом, и тогда
+    падал весь проект, хотя сценарий мог написать кто-то другой.
+
+    Отказ модерации — исключение из правила: если тему отклонили по
+    содержанию, её отклонит и следующая модель, а лишний вызов будет стоить
+    денег и времени.
+    """
+    chain = cfg.script_provider_chain
+    callers = {"openrouter": _via_openrouter, "anthropic": _via_anthropic}
+    last_error: Exception | None = None
+
+    for position, provider in enumerate(chain, start=1):
+        if not cfg.has_script_key(provider):
+            log.info("script: %s пропущен — ключ не задан", provider)
+            continue
+        model = cfg.script_model(provider)
+        try:
+            data, cost = callers[provider](cfg, prompt, schema)
+        except ScriptRefusedError:
+            raise
+        except Exception as e:  # noqa: BLE001 — падение одного провайдера не финал
+            last_error = e
+            log.warning("script: %s (%s) не справился: %s", provider, model, e)
+            if position < len(chain):
+                log.info("script: пробуем следующего провайдера")
+            continue
+
+        scenes = _validate(data, n)
+        scenes = _clamp_narration(scenes, words_per_scene)
+        log.info(
+            "script: %d сцен, сценарий написал %s (%s), стоимость $%.4f",
+            len(scenes), provider, model, cost,
+        )
+        return {
+            "title": data.get("title", title),
+            "continuity": (data.get("continuity") or "").strip(),
+            "scenes": scenes,
+            "cost_usd": cost,
+            "provider": provider,
+            "model": model,
+        }
+
+    raise RuntimeError(
+        f"сценарий не написал ни один провайдер из цепочки {', '.join(chain)}: {last_error}"
+    )
 
 
 # Реальный темп синтезированной речи, замеренный на готовых роликах: 2.57 и

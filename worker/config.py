@@ -39,8 +39,18 @@ class Config:
     openrouter_api_key: str = field(
         default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", "").strip()
     )
+    # Сценарий — лицо продукта: по нему судят, «умный» ролик или нет.
+    # Поэтому по умолчанию его пишет Claude Opus 5, в том числе когда доступ
+    # идёт через OpenRouter. Дешёвая модель экономит центы и стоит качества.
     openrouter_model: str = field(
-        default_factory=lambda: os.environ.get("OPENROUTER_MODEL", "openai/gpt-5.4-mini")
+        default_factory=lambda: os.environ.get("OPENROUTER_MODEL", "anthropic/claude-opus-5")
+    )
+
+    # Цепочка провайдеров сценария, как у кадров: пробуются по очереди.
+    # Пусто — порядок выводится из LLM_PROVIDER, чтобы старые .env работали
+    # как раньше, но уже с запасным путём.
+    script_provider: str = field(
+        default_factory=lambda: os.environ.get("SCRIPT_PROVIDER", "").strip().lower()
     )
 
     # Пустое значение допустимо: в безопасном режиме озвучка заменяется
@@ -129,6 +139,31 @@ class Config:
         return [x.strip() for x in self.image_provider.split(",") if x.strip()]
 
     @property
+    def script_provider_chain(self) -> list[str]:
+        """Провайдеры сценария по приоритету.
+
+        Один провайдер — одна точка отказа: OpenRouter уже отвечал 429 и
+        пустым ответом, и тогда проект падал целиком. Запасной путь стоит
+        ноль, пока основной работает.
+        """
+        if self.script_provider:
+            chain = [x.strip() for x in self.script_provider.split(",") if x.strip()]
+        else:
+            other = "openrouter" if self.llm_provider == "anthropic" else "anthropic"
+            chain = [self.llm_provider, other]
+        seen: list[str] = []
+        for name in chain:
+            if name in ("anthropic", "openrouter") and name not in seen:
+                seen.append(name)
+        return seen
+
+    def has_script_key(self, provider: str) -> bool:
+        return bool(self.openrouter_api_key if provider == "openrouter" else self.anthropic_api_key)
+
+    def script_model(self, provider: str) -> str:
+        return self.openrouter_model if provider == "openrouter" else self.llm_model
+
+    @property
     def active_llm_model(self) -> str:
         """Модель, которая реально используется. Раньше лог всегда писал
         LLM_MODEL, даже когда сценарий шёл через OpenRouter, — и в логе стояла
@@ -168,14 +203,17 @@ class Config:
                 f"LLM_PROVIDER must be 'anthropic' or 'openrouter', got {self.llm_provider!r}"
             )
         if self.effective_script_mode == "llm":
-            needed, name = (
-                (self.openrouter_api_key, "OPENROUTER_API_KEY")
-                if self.llm_provider == "openrouter"
-                else (self.anthropic_api_key, "ANTHROPIC_API_KEY")
-            )
-            if not needed:
+            # Хватает одного работающего провайдера в цепочке: остальные —
+            # запас. Раньше отсутствие ключа основного роняло запуск, даже
+            # когда второй провайдер был настроен и готов писать сценарий.
+            if not any(self.has_script_key(p) for p in self.script_provider_chain):
+                names = " или ".join(
+                    "OPENROUTER_API_KEY" if p == "openrouter" else "ANTHROPIC_API_KEY"
+                    for p in self.script_provider_chain
+                )
                 raise RuntimeError(
-                    f"{name} требуется при SCRIPT_MODE=llm и LLM_PROVIDER={self.llm_provider}. "
+                    f"{names} требуется при SCRIPT_MODE=llm "
+                    f"(цепочка: {', '.join(self.script_provider_chain)}). "
                     "Поставьте SCRIPT_MODE=mock, чтобы работать без ключа."
                 )
         # Ключи провайдеров обязательны только тогда, когда деньги разрешены.

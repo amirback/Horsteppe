@@ -68,8 +68,37 @@ def plan_ad() -> list[dict]:
     return [shot for scene in plans for shot in scene]
 
 
+def who_writes_the_script() -> None:
+    """Кто на самом деле напишет сценарий — видно до запуска, а не из логов.
+
+    Значения ключей не печатаются, только факт их наличия (CLAUDE.md §2).
+    """
+    from config import Config
+
+    cfg = Config()
+    print("СЦЕНАРИЙ")
+    print(f"  режим: {cfg.effective_script_mode}"
+          + ("  (безопасный режим: шаблон вместо модели)" if cfg.effective_script_mode == "mock" else ""))
+    print(f"  цепочка: {', '.join(cfg.script_provider_chain)}")
+    author = None
+    for provider in cfg.script_provider_chain:
+        ready = cfg.has_script_key(provider)
+        mark = "готов" if ready else "ключа нет"
+        print(f"    {provider:<11} {cfg.script_model(provider):<28} {mark}")
+        if ready and author is None:
+            author = (provider, cfg.script_model(provider))
+    if author:
+        print(f"  писать будет: {author[1]} через {author[0]}")
+    else:
+        print("  писать некому: ни одного ключа")
+    print("  цена сценария: ~$0.04 за ролик на Claude Opus 5"
+          " (дешёвая модель обходилась в $0.002)")
+    print()
+
+
 def main() -> int:
     paid_requested = "--paid" in sys.argv
+    who_writes_the_script()
     safe_mode_off = os.environ.get("MVP_SAFE_MODE", "1").strip().lower() in ("0", "false", "no", "off")
     opted_in = os.environ.get("ALLOW_PAID_VIDEO_TESTS", "").strip().lower() == "true"
     has_key = bool(os.environ.get("FAL_KEY", "").strip())

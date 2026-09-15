@@ -408,7 +408,12 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             script = script_step.generate_script(
                 cfg, project["topic"], project["style"], project["duration_sec"], brief=brief
             )
-            db.log_cost(project_id, "script", "anthropic", script["cost_usd"], cfg.llm_model)
+            # В учёт идёт тот, кто действительно написал сценарий, а не тот,
+            # кто стоит первым в настройке: цепочка могла уйти к запасному.
+            db.log_cost(
+                project_id, "script", script.get("provider") or cfg.llm_provider,
+                script["cost_usd"], script.get("model") or cfg.active_llm_model,
+            )
             guard.record(script["cost_usd"], "сценарий")
             # Описание героев и мира вшивается в промпт каждой сцены прямо
             # здесь. Так оно переживает повтор: на второй попытке сценарий
