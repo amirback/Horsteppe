@@ -29,6 +29,12 @@ class Config:
     # (SCRIPT_MODE=mock doesn't call Anthropic at all, so no key required).
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "").strip())
     llm_model: str = field(default_factory=lambda: os.environ.get("LLM_MODEL", "claude-opus-5"))
+    # Ключ уровня организации не привязан к рабочему пространству, и вызов без
+    # этого идентификатора отклоняется с 400. Ключ, созданный внутри рабочего
+    # пространства, ничего такого не требует — поле остаётся пустым.
+    anthropic_workspace_id: str = field(
+        default_factory=lambda: os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip()
+    )
     script_mode: str = field(default_factory=lambda: os.environ.get("SCRIPT_MODE", "llm"))
 
     # Кто пишет сценарий. Провайдер выбирается настройкой, а не правкой кода:

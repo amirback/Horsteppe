@@ -68,6 +68,35 @@ def plan_ad() -> list[dict]:
     return [shot for scene in plans for shot in scene]
 
 
+def anthropic_key_state(cfg) -> str:
+    """Проверка ключа Anthropic без единого цента.
+
+    Список моделей не тарифицируется, но отвечает на оба вопроса сразу:
+    действителен ли ключ и доступна ли ему модель. Проверять ключ настоящей
+    генерацией было бы и дороже, и медленнее.
+    """
+    import httpx
+
+    headers = {"x-api-key": cfg.anthropic_api_key, "anthropic-version": "2023-06-01"}
+    if cfg.anthropic_workspace_id:
+        headers["anthropic-workspace-id"] = cfg.anthropic_workspace_id
+    try:
+        r = httpx.get("https://api.anthropic.com/v1/models", headers=headers, timeout=20)
+    except Exception as e:  # noqa: BLE001 — диагностика не должна падать
+        return f"проверить не удалось: {type(e).__name__}"
+
+    if r.status_code == 200:
+        ids = [m["id"] for m in r.json().get("data", [])]
+        return ("готов" if cfg.llm_model in ids
+                else f"ключ рабочий, но модели {cfg.llm_model} в списке нет")
+    if r.status_code == 401:
+        return "ключ недействителен"
+    message = (r.json().get("error", {}).get("message", "") if r.headers.get("content-type", "").startswith("application/json") else "")
+    if "workspace" in message.lower():
+        return "ключ организации: нужен ANTHROPIC_WORKSPACE_ID или ключ рабочего пространства"
+    return f"отказ {r.status_code}"
+
+
 def who_writes_the_script() -> None:
     """Кто на самом деле напишет сценарий — видно до запуска, а не из логов.
 
@@ -83,7 +112,13 @@ def who_writes_the_script() -> None:
     author = None
     for provider in cfg.script_provider_chain:
         ready = cfg.has_script_key(provider)
-        mark = "готов" if ready else "ключа нет"
+        if not ready:
+            mark = "ключа нет"
+        elif provider == "anthropic":
+            mark = anthropic_key_state(cfg)
+            ready = mark == "готов"
+        else:
+            mark = "готов"
         print(f"    {provider:<11} {cfg.script_model(provider):<28} {mark}")
         if ready and author is None:
             author = (provider, cfg.script_model(provider))

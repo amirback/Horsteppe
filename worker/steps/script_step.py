@@ -424,7 +424,16 @@ def _via_anthropic(cfg: Config, prompt: str, schema: dict = None) -> tuple[dict,
     # и воркер должен запускаться без пакета anthropic — как и без fal_client.
     import anthropic
 
-    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key, timeout=REQUEST_TIMEOUT)
+    # Организационный ключ обязан назвать рабочее пространство, иначе запрос
+    # отклоняется ещё до модели. Ключ, созданный внутри пространства, этого
+    # не требует, и заголовок просто не добавляется.
+    headers = (
+        {"anthropic-workspace-id": cfg.anthropic_workspace_id}
+        if cfg.anthropic_workspace_id else None
+    )
+    client = anthropic.Anthropic(
+        api_key=cfg.anthropic_api_key, timeout=REQUEST_TIMEOUT, default_headers=headers
+    )
     response = client.messages.create(
         model=cfg.llm_model,
         max_tokens=4000,
