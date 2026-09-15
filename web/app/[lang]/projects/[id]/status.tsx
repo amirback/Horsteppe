@@ -24,9 +24,13 @@ type Data = {
     style: string;
     duration_sec: number;
     aspect_ratio: string | null;
-    status: "queued" | "generating" | "done" | "failed";
+    status: "queued" | "generating" | "done" | "done_degraded" | "failed";
     status_detail: string | null;
     error_message: string | null;
+    /** Доля таймлайна, закрытая настоящим AI-видео. Зум по фотографии сюда не входит. */
+    real_video_coverage: number | null;
+    /** Почему ролик готов, но ниже цели. Показывается рядом с плеером. */
+    degraded_reason: string | null;
   };
   scenes: Scene[];
   render: { final_video_url: string; duration_sec: number | null } | null;
@@ -79,7 +83,7 @@ export function ProjectStatus({
       const body = await load();
       if (stopped) return;
       const status = body?.project.status;
-      if (status === "done" || status === "failed") return;
+      if (status === "done" || status === "done_degraded" || status === "failed") return;
       timer.current = setTimeout(tick, POLL_MS);
     }
     tick();
@@ -105,11 +109,16 @@ export function ProjectStatus({
       }
       const body = await load();
       // Опрос сам себя не перезапустит: он остановился, когда проект упал.
-      if (body && body.project.status !== "done" && body.project.status !== "failed") {
+      if (
+        body &&
+        body.project.status !== "done" &&
+        body.project.status !== "done_degraded" &&
+        body.project.status !== "failed"
+      ) {
         timer.current = setTimeout(async function tick() {
           const next = await load();
           const status = next?.project.status;
-          if (status === "done" || status === "failed") return;
+          if (status === "done" || status === "done_degraded" || status === "failed") return;
           timer.current = setTimeout(tick, POLL_MS);
         }, POLL_MS);
       }
@@ -122,8 +131,12 @@ export function ProjectStatus({
 
   const project = data?.project;
   const render = data?.render;
-  const done = project?.status === "done" && render;
+  // Ролик с оговоркой — это готовый ролик: он играется и скачивается.
+  // Разница только в том, что о невыполненном обещании сказано вслух.
+  const degraded = project?.status === "done_degraded";
+  const done = (project?.status === "done" || degraded) && render;
   const failed = project?.status === "failed";
+  const coverage = project?.real_video_coverage;
 
   return (
     <>
@@ -145,6 +158,18 @@ export function ProjectStatus({
             <p className="mt-3 max-w-2xl text-[15px] leading-relaxed text-ink-soft/80">
               {project.topic}
             </p>
+
+            {done && project.degraded_reason ? (
+              <p className="mt-4 max-w-2xl rounded-2xl border border-ink/15 bg-white/60 px-4 py-3 text-[13.5px] leading-relaxed text-ink-soft/85">
+                {project.degraded_reason}
+              </p>
+            ) : null}
+
+            {done && coverage !== null && coverage !== undefined ? (
+              <p className="mt-2 text-[12.5px] text-ink-soft/70">
+                {s.project.realMotion}: {Math.round(coverage * 100)}%
+              </p>
+            ) : null}
 
             {done ? (
               <motion.div

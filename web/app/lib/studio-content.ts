@@ -61,6 +61,8 @@ export type StudioDict = {
     scenes: string;
     duration: string;
     retry: string;
+    /** Доля ролика, закрытая настоящим AI-видео. Не выдумка, а измерение. */
+    realMotion: string;
     stages: string[];
   };
 };
@@ -175,6 +177,7 @@ export const studio: Record<Lang, StudioDict> = {
       scenes: "Scenes",
       duration: "Duration",
       retry: "Try again",
+      realMotion: "Real motion",
       stages: [
         "Understanding the project",
         "Writing the script",
@@ -295,6 +298,7 @@ export const studio: Record<Lang, StudioDict> = {
       scenes: "Сцены",
       duration: "Длительность",
       retry: "Попробовать снова",
+      realMotion: "Настоящее движение",
       stages: [
         "Разбираем задачу",
         "Пишем сценарий",
@@ -415,6 +419,7 @@ export const studio: Record<Lang, StudioDict> = {
       scenes: "Сценалар",
       duration: "Ұзақтығы",
       retry: "Қайталап көру",
+      realMotion: "Нақты қозғалыс",
       stages: [
         "Тапсырманы талдаймыз",
         "Сценарий жазамыз",

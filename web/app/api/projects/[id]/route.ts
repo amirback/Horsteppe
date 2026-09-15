@@ -18,7 +18,8 @@ export async function GET(
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, topic, style, duration_sec, aspect_ratio, status, status_detail, error_message, cost_usd, created_at"
+      "id, topic, style, duration_sec, aspect_ratio, project_type, status, status_detail, " +
+        "error_message, cost_usd, real_video_coverage, degraded_reason, created_at"
     )
     .eq("id", id)
     .maybeSingle();
