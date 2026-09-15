@@ -13,6 +13,24 @@ log = logging.getLogger("worker.db")
 
 BUCKET = "media"
 
+# Значения дублируются в проверках миграции 0004; тест стережёт расхождение.
+PROJECT_TYPES = ("general_video", "product_ad", "image_to_video")
+REFERENCE_VIEW_TYPES = ("front", "side", "detail", "packaging", "lifestyle", "unknown")
+# Потолок из ТЗ §7: больше пяти снимков товара не улучшают результат, но
+# умножают стоимость подготовки и шанс, что в кадр попадёт чужой ракурс.
+MAX_REFERENCES_PER_PROJECT = 5
+
+
+def primary_of(references: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Главный референс из готового списка. Вынесен из класса, чтобы конвейер
+    мог выбрать его из уже прочитанных строк, не ходя в базу второй раз."""
+    if not references:
+        return None
+    for ref in references:
+        if ref.get("is_primary"):
+            return ref
+    return min(references, key=lambda r: r.get("order_index", 0))
+
 
 class Db:
     def __init__(self, cfg: Config) -> None:
@@ -103,6 +121,36 @@ class Db:
 
     def update_shot(self, shot_id: str, **fields: Any) -> None:
         self.client.table("shots").update(fields).eq("id", shot_id).execute()
+
+    # ---------- референсы ----------
+    # Фотография, которую принёс пользователь: снимок товара или кадр для
+    # оживления. Референс принадлежит проекту, а не кадру: одна и та же
+    # фотография нужна нескольким кадрам сразу, и дублировать её по кадрам
+    # значит разослать провайдеру несколько разных «канонических» видов товара.
+
+    def get_references(self, project_id: str) -> list[dict[str, Any]]:
+        res = (
+            self.client.table("project_references")
+            .select("*")
+            .eq("project_id", project_id)
+            .order("order_index")
+            .execute()
+        )
+        return res.data or []
+
+    def insert_references(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        res = self.client.table("project_references").insert(rows).execute()
+        return res.data
+
+    def primary_reference(self, project_id: str) -> dict[str, Any] | None:
+        """Канонический вид товара — с него начинается режим «фото → видео».
+
+        Явная пометка сильнее порядка: пользователь мог загрузить общий план
+        вторым, и именно он — товар лицом. Если пометки нет, каноническим
+        считается первый загруженный, а не случайный.
+        """
+        return primary_of(self.get_references(project_id))
+
 
     def insert_render(self, project_id: str, url: str, duration_sec: float) -> None:
         self.client.table("renders").insert(
