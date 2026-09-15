@@ -119,11 +119,16 @@ def candidates(
     aspect: str | None = None,
     duration_sec: float | None = None,
     affordable_usd: float | None = None,
+    ignore_keys: bool = False,
 ) -> list[Capability]:
-    """Шаг A — жёсткая отсечка. Остаются только пригодные, без оценок."""
+    """Шаг A — жёсткая отсечка. Остаются только пригодные, без оценок.
+
+    `ignore_keys` нужен оценке стоимости: сухой прогон должен назвать цену и
+    на машине, где ключей нет, — иначе он покажет ноль и успокоит зря.
+    """
     out = []
     for cap in REGISTRY:
-        if cap.kind != kind or not has_key(cap):
+        if cap.kind != kind or (not ignore_keys and not has_key(cap)):
             continue
         if needs_image_to_video and not cap.supports_image_to_video:
             continue
