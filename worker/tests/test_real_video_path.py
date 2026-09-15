@@ -59,7 +59,7 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
         import os
         os.environ.update({
             "MVP_SAFE_MODE": "0", "SCRIPT_MODE": "mock", "VIDEO_MODE": "provider",
-            "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test",
+            "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test", "FAL_KEY": "test",
             "SUPABASE_URL": "https://example.supabase.co",
             "SUPABASE_SERVICE_ROLE_KEY": "test", "VIDEO_FORMAT": "9:16",
             "TRANSITION_SEC": "0.4", "SUBTITLES": "0",
@@ -75,7 +75,7 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
 
         cls.calls: list[str] = []
 
-        def fake_provider(cfg, image_url, motion_prompt, out_path):
+        def fake_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
             """Стоит как настоящий вызов, но ничего не платит."""
             cls.calls.append(image_url)
             out_path.write_bytes(cls.clip.read_bytes())

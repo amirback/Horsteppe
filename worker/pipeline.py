@@ -17,6 +17,7 @@ import httpx
 import budget
 import media
 import product_brief
+import providers
 import quality
 import references as references_mod
 import safe_mode
@@ -123,17 +124,35 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
                 continue
             db.set_progress(project_id, f"Оживляем фотографию: {i + 1}/{total}")
             clip_path = work_dir / f"shot_{i:02d}_clip.mp4"
+            choice = providers.choose(
+                "video", importance=1.0, shot_label=f"клип {i + 1}",
+                needs_image_to_video=True, needs_reference=True, aspect=aspect,
+                affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
+            )
+            if choice is None:
+                reason = providers.why_not(
+                    "video",
+                    affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
+                    needs_image_to_video=True, needs_reference=True, aspect=aspect,
+                )
+                log.info("[%s] клип %d не будет сделан: %s", project_id[:8], i, reason)
+                db.update_shot(shot["id"], failure_reason=reason[:500])
+                continue
             try:
-                cost = video_step.generate_clip(cfg, reference["public_url"], motion, clip_path)
+                cost = video_step.generate_clip(
+                    cfg, reference["public_url"], motion, clip_path,
+                    model=choice.model, cost_usd=choice.cost_usd,
+                )
             except (video_step.VideoError, budget.BudgetExceeded) as e:
                 log.warning("[%s] клип %d не получился: %s", project_id[:8], i, e)
                 db.update_shot(shot["id"], failure_reason=str(e)[:500])
                 continue
             url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
-            db.log_cost(project_id, "video", "fal", cost, f"shot {i}")
+            db.log_cost(project_id, "video", choice.provider, cost, f"shot {i}")
             guard.record(cost, f"клип {i}")
             db.update_shot(shot["id"], video_url=url, status="video_done",
-                           generation_mode="real_video", actual_cost_usd=cost)
+                           generation_mode="real_video", actual_cost_usd=cost,
+                           provider=choice.provider, model=choice.model)
             shot.update(video_url=url, generation_mode="real_video")
     else:
         log.info("[%s] платное видео закрыто: фотография получит движение камеры", project_id[:8])
@@ -340,7 +359,7 @@ def _degraded_reason(cfg: Config, shots: list[dict], coverage: float, target: fl
     if not safe_mode.is_paid_video_allowed(cfg):
         return "Настоящее видео отключено в этом режиме — движение сделано камерой по кадру."
     denied = [s for s in shots if s.get("failure_reason")]
-    if any("потолк" in (s.get("failure_reason") or "").lower() for s in denied):
+    if any("бюджет" in (s.get("failure_reason") or "").lower() for s in denied):
         return "Бюджета хватило не на все кадры — часть осталась движением камеры."
     if denied:
         return "Провайдер видео ответил отказом на часть кадров."
@@ -484,6 +503,8 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             db.update_shot(shot["id"], image_url=url, status="image_done", actual_cost_usd=cost)
             shot.update(image_url=url)
 
+        aspect_hint = project.get("aspect_ratio") or cfg.video_format
+
         # ---- 5. Настоящее видео на кадр.
         #
         # Решение принимается по каждому кадру, а не одним переключателем на
@@ -498,10 +519,38 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     project_id, f"Видео: кадр {i + 1}/{shot_total} (может занять несколько минут)"
                 )
                 clip_path = work_dir / f"shot_{i:02d}_clip.mp4"
+                # Модель выбирается на кадр: крючку и кадру товара достаётся
+                # лучшее, фону — дешёвое. Остаток бюджета участвует в отсечке,
+                # поэтому дорогая модель просто не попадёт в кандидаты, когда
+                # денег на неё нет.
+                choice = providers.choose(
+                    "video",
+                    importance=float(shot.get("visual_importance") or 0.5),
+                    shot_label=f"кадр {i + 1}",
+                    needs_image_to_video=True,
+                    needs_reference=bool(shot.get("first_frame_reference")),
+                    aspect=aspect_hint,
+                    affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
+                )
+                if choice is None:
+                    # Отказ до вызова — лучший вид отказа: ни задержки, ни
+                    # денег. Но причину обязан увидеть человек, иначе кадр
+                    # молча остаётся фотографией.
+                    reason = providers.why_not(
+                        "video",
+                        affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
+                        needs_image_to_video=True,
+                        needs_reference=bool(shot.get("first_frame_reference")),
+                        aspect=aspect_hint,
+                    )
+                    log.info("[%s] кадр %d без настоящего видео: %s", project_id[:8], i, reason)
+                    db.update_shot(shot["id"], failure_reason=reason[:500])
+                    continue
                 try:
                     cost = video_step.generate_clip(
                         cfg, shot["image_url"],
                         shot.get("video_prompt") or shot["visual_prompt"], clip_path,
+                        model=choice.model, cost_usd=choice.cost_usd,
                     )
                 except (video_step.VideoError, budget.BudgetExceeded) as e:
                     # Падение провайдера и конец денег кончаются одинаково:
@@ -512,13 +561,14 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     db.update_shot(shot["id"], failure_reason=str(e)[:500])
                     continue
                 url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
-                db.log_cost(project_id, "video", "fal", cost, f"shot {i}")
+                db.log_cost(project_id, "video", choice.provider, cost, f"shot {i}")
                 guard.record(cost, f"видео кадра {i}")
                 # Только здесь кадр становится настоящим видео: движение по
                 # картинке засчитывать в real_video нельзя.
                 db.update_shot(
                     shot["id"], video_url=url, status="video_done",
                     generation_mode="real_video", actual_cost_usd=cost,
+                    provider=choice.provider, model=choice.model,
                 )
                 shot.update(video_url=url, generation_mode="real_video")
 

@@ -70,7 +70,7 @@ class TestDegradedReason(unittest.TestCase):
         self.assertIn("отключено", reason)
 
     def test_budget_is_named_as_the_reason(self) -> None:
-        shots = [{"failure_reason": "генерация видео: нужно $0.35, доступно $0.10 из потолка $0.50"}]
+        shots = [{"failure_reason": "бюджет проекта не позволяет: остаток $0.10 ниже цены самой дешёвой подходящей модели"}]
         self.assertIn("Бюджета", pipeline._degraded_reason(FakeCfg(), shots, 0.2, 0.7))
 
     def test_provider_failure_is_named_as_the_reason(self) -> None:
@@ -92,7 +92,7 @@ class TestFrozenClipIsCaughtAndReplaced(unittest.TestCase):
 
         env = {
             "MVP_SAFE_MODE": "0", "SCRIPT_MODE": "mock", "VIDEO_MODE": "provider",
-            "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test",
+            "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test", "FAL_KEY": "test",
             "SUPABASE_URL": "https://example.supabase.co",
             "SUPABASE_SERVICE_ROLE_KEY": "test", "VIDEO_FORMAT": "9:16",
             "TRANSITION_SEC": "0", "SUBTITLES": "0",
@@ -101,7 +101,7 @@ class TestFrozenClipIsCaughtAndReplaced(unittest.TestCase):
         os.environ.update(env)
         from config import Config
 
-        def frozen_clip(cfg, image_url, motion_prompt, out_path):
+        def frozen_clip(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
             """Пять секунд одного и того же кадра — брак, который платят."""
             media.run_ffmpeg([
                 "-f", "lavfi", "-i", f"color=c=slategray:size={SIZE[0]}x{SIZE[1]}:rate=30",

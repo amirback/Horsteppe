@@ -131,7 +131,7 @@ def main(argv: list[str]) -> int:
         "status": "queued",
     })
 
-    def local_provider(cfg, image_url, motion_prompt, out_path):
+    def local_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
         """Отдаёт настоящий клип ровно одному кадру, остальным отказывает."""
         index = len([c for c in provider_calls])
         provider_calls.append(index)

@@ -35,7 +35,7 @@ SIZE = (180, 320)
 
 ENV = {
     "MVP_SAFE_MODE": "0", "SCRIPT_MODE": "mock", "VIDEO_MODE": "provider",
-    "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test",
+    "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test", "FAL_KEY": "test",
     "SUPABASE_URL": "https://example.supabase.co", "SUPABASE_SERVICE_ROLE_KEY": "test",
     "VIDEO_FORMAT": "9:16", "TRANSITION_SEC": "0", "SUBTITLES": "0",
 }
@@ -88,7 +88,7 @@ class ModeSetup:
         cls.animated: list[str] = []
         cls.generated_prompts: list[str] = []
 
-        def fake_clip(cfg, image_url, motion_prompt, out_path):
+        def fake_clip(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
             cls.animated.append(image_url)
             media.run_ffmpeg(["-f", "lavfi",
                               "-i", f"testsrc2=size={SIZE[0]}x{SIZE[1]}:rate=30:duration=5",

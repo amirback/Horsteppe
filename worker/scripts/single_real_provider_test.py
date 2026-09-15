@@ -118,7 +118,7 @@ def main() -> int:
     local_calls: list[int] = []
     announced = {"done": False}
 
-    def dispatch(cfg_, image_url, motion_prompt, out_path):
+    def dispatch(cfg_, image_url, motion_prompt, out_path, model=None, cost_usd=None):
         """К настоящему провайдеру идёт ровно один кадр, остальные — подмена."""
         index = len(paid_calls) + len(local_calls)
         if not (PAID_ENABLED and index == SELECTED_SHOT):

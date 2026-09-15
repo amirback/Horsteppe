@@ -28,13 +28,22 @@ class VideoError(Exception):
     pass
 
 
-def generate_clip(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> float:
+def generate_clip(
+    cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path,
+    model: str | None = None, cost_usd: float | None = None,
+) -> float:
     """Animate an image into a ~5s clip. `image_public_url` must be publicly
-    reachable (we pass the Supabase Storage public URL). Returns cost in USD."""
+    reachable (we pass the Supabase Storage public URL). Returns cost in USD.
+
+    `model` и `cost_usd` приходят от маршрутизатора: на важный кадр он берёт
+    модель посильнее, на фоновый — подешевле. Без них шаг работает как раньше,
+    по настройке из окружения.
+    """
     # Защита в глубину: конвейер и так не зовёт этот шаг в безопасном режиме.
     # Оценка передаётся до вызова — потолок проекта обязан успеть отказать,
     # пока деньги ещё не потрачены.
-    safe_mode.require_paid(cfg, "генерация видео", COSTS["fal_video_per_clip"])
+    price = COSTS["fal_video_per_clip"] if cost_usd is None else float(cost_usd)
+    safe_mode.require_paid(cfg, "генерация видео", price)
 
     os.environ.setdefault("FAL_KEY", cfg.fal_key)
     import fal_client
@@ -42,7 +51,7 @@ def generate_clip(cfg: Config, image_public_url: str, motion_prompt: str, out_pa
     try:
         result = call_with_timeout(
             fal_client.subscribe,
-            cfg.fal_video_model,
+            model or cfg.fal_video_model,
             arguments={
                 "image_url": image_public_url,
                 "prompt": motion_prompt,
@@ -67,4 +76,4 @@ def generate_clip(cfg: Config, image_public_url: str, motion_prompt: str, out_pa
         resp = client.get(url)
         resp.raise_for_status()
     out_path.write_bytes(resp.content)
-    return COSTS["fal_video_per_clip"]
+    return price

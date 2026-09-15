@@ -152,7 +152,7 @@ class TestPipelineRespectsTheCeiling(unittest.TestCase):
         # соседям, которые проверяют поведение без ключей.
         env = {
             "MVP_SAFE_MODE": "0", "SCRIPT_MODE": "mock", "VIDEO_MODE": "provider",
-            "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test",
+            "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test", "FAL_KEY": "test",
             "SUPABASE_URL": "https://example.supabase.co",
             "SUPABASE_SERVICE_ROLE_KEY": "test", "VIDEO_FORMAT": "9:16",
             "TRANSITION_SEC": "0", "SUBTITLES": "0",
@@ -163,7 +163,7 @@ class TestPipelineRespectsTheCeiling(unittest.TestCase):
 
         cls.attempts: list[str] = []
 
-        def fake_provider(cfg, image_url, motion_prompt, out_path):
+        def fake_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
             """Заглушка, которая честно спрашивает разрешения, как настоящий шаг."""
             cls.attempts.append(image_url)
             safe_mode.require_paid(cfg, "генерация видео", COSTS["fal_video_per_clip"])
@@ -239,11 +239,18 @@ class TestPipelineRespectsTheCeiling(unittest.TestCase):
     def test_the_rest_were_denied_before_the_call(self) -> None:
         denied = [s for s in self.shots if s.get("failure_reason")]
         self.assertTrue(denied, "отказ должен быть записан в кадре")
-        self.assertIn("потолк", " ".join(s["failure_reason"] for s in denied).lower())
+        self.assertIn("бюджет", " ".join(s["failure_reason"] for s in denied).lower())
 
-    def test_provider_was_asked_more_times_than_it_was_paid(self) -> None:
-        """Отказ случается на чекпойнте, а не на стороне провайдера."""
-        self.assertGreater(len(self.attempts), 1)
+    def test_provider_is_not_even_called_when_money_is_out(self) -> None:
+        """Лучший отказ — до вызова: ни задержки в несколько минут, ни денег.
+
+        Раньше здесь ожидалось обратное: провайдера звали и отказывали на
+        чекпойнте. Маршрутизатор отсекает недоступную по деньгам модель
+        раньше, и это строго лучше — но причина всё равно обязана попасть
+        в кадр, иначе отказ становится молчаливым.
+        """
+        paid = [s for s in self.db.shots if s.get("generation_mode") == "real_video"]
+        self.assertEqual(len(self.attempts), len(paid))
 
     def test_coverage_counts_only_what_was_actually_generated(self) -> None:
         coverage = self.pipeline.real_video_coverage(self.shots)

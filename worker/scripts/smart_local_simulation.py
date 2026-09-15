@@ -105,7 +105,7 @@ def main() -> int:
 
     provider_calls: list[str] = []
 
-    def local_provider(cfg, image_url, motion_prompt, out_path):
+    def local_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
         """Локальный клип вместо ответа провайдера. Денег не стоит."""
         clip = clips[len(provider_calls) % len(clips)]
         provider_calls.append(clip.name)
