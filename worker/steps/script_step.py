@@ -9,12 +9,14 @@ SCRIPT_MODE=mock обходит модель целиком и собирает 
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
 
 import httpx
 
+import product_brief
 from config import COSTS, Config
 
 log = logging.getLogger("worker.script")
@@ -81,6 +83,30 @@ SCENES_SCHEMA = {
 }
 
 
+# Схема рекламы отличается двумя полями, и оба обязательны. `strict: True`
+# у провайдера требует, чтобы каждое свойство было в `required`, поэтому
+# добавить их в общую схему «необязательными» нельзя — пришлось бы менять
+# поведение обычных роликов ради рекламы.
+def _ad_schema() -> dict:
+    schema = copy.deepcopy(SCENES_SCHEMA)
+    scene = schema["properties"]["scenes"]["items"]
+    scene["properties"]["purpose"] = {
+        "type": "string",
+        "description": "Beat name for this scene, lowercase, from the requested structure",
+    }
+    scene["required"] = [*scene["required"], "purpose"]
+    shot = scene["properties"]["shots"]["items"]
+    shot["properties"]["product_required"] = {
+        "type": "boolean",
+        "description": "True when the product must be visible and recognisable in this shot",
+    }
+    shot["required"] = [*shot["required"], "product_required"]
+    return schema
+
+
+AD_SCENES_SCHEMA = _ad_schema()
+
+
 class ScriptRefusedError(Exception):
     """The topic was declined by content moderation."""
 
@@ -123,11 +149,56 @@ def _mock_script(topic: str, style: str, duration_sec: int) -> dict:
     }
 
 
-def generate_script(cfg: Config, topic: str, style: str, duration_sec: int) -> dict:
-    """Returns {"title": str, "scenes": [{"narration", "image_prompt"}, ...], "cost_usd": float}."""
+def _mock_ad_script(brief, style: str, duration_sec: int) -> dict:
+    """Шаблонная реклама без модели: проверяет остальной конвейер за ноль денег.
+
+    Такты берутся настоящие — те же, что ушли бы в модель, — поэтому по моку
+    видно и структуру, и расстановку кадров товара.
+    """
+    beats = brief.structure(duration_sec)
+    scenes = []
+    for i, beat in enumerate(beats):
+        product = beat in ("product", "benefit", "second_benefit")
+        scenes.append({
+            "narration": f"{beat.replace('_', ' ').capitalize()}. Тестовая озвучка "
+                         f"такта {i + 1} из {len(beats)} для «{brief.product_name}».",
+            "image_prompt": f"{style} advertising frame for '{brief.product_name}', "
+                            f"beat {beat}, vertical 9:16 composition, no text, no logos",
+            "purpose": beat,
+            "shots": [
+                {"framing": "hero product shot", "action": f"{beat}: product in frame",
+                 "product_required": product},
+                {"framing": "close-up detail", "action": f"{beat}: detail",
+                 "product_required": product},
+            ],
+        })
+    return {
+        "title": brief.product_name,
+        "continuity": f"The product '{brief.product_name}' keeps its exact shape, colour and "
+                      f"packaging in every shot; consistent palette and lighting",
+        "scenes": scenes,
+        "cost_usd": 0.0,
+    }
+
+
+def generate_script(cfg: Config, topic: str, style: str, duration_sec: int, brief=None) -> dict:
+    """Returns {"title": str, "scenes": [{"narration", "image_prompt"}, ...], "cost_usd": float}.
+
+    `brief` — ProductBrief. Если он есть, пишется реклама: другая структура,
+    другая схема ответа и прямой запрет выдумывать свойства товара. Обычный
+    ролик этим не затронут — у него прежний промпт и прежняя схема.
+    """
     if cfg.effective_script_mode == "mock":
         log.info("script: SCRIPT_MODE=mock — skipping Claude, using template scenes")
-        return _mock_script(topic, style, duration_sec)
+        return _mock_ad_script(brief, style, duration_sec) if brief else _mock_script(topic, style, duration_sec)
+
+    if brief is not None:
+        n = len(brief.structure(duration_sec))
+        words_per_scene = _words_per_scene(duration_sec, n)
+        prompt = product_brief.ad_prompt(brief, style, duration_sec, words_per_scene)
+        schema = AD_SCENES_SCHEMA
+        log.info("script: реклама «%s», такты %s", brief.product_name, brief.structure(duration_sec))
+        return _run(cfg, prompt, schema, n, words_per_scene, brief.product_name)
 
     n = _scene_count(duration_sec)
     words_per_scene = _words_per_scene(duration_sec, n)
@@ -155,16 +226,21 @@ Requirements:
   camera angles on one continuous action, not separate events with new people.
 - No emojis, no hashtags, no scene numbers inside narration."""
 
+    return _run(cfg, prompt, SCENES_SCHEMA, n, words_per_scene, topic)
+
+
+def _run(cfg: Config, prompt: str, schema: dict, n: int, words_per_scene: int, title: str) -> dict:
+    """Общий хвост обоих режиссёров: вызов провайдера, проверка, подгонка длины."""
     if cfg.llm_provider == "openrouter":
-        data, cost = _via_openrouter(cfg, prompt)
+        data, cost = _via_openrouter(cfg, prompt, schema)
     else:
-        data, cost = _via_anthropic(cfg, prompt)
+        data, cost = _via_anthropic(cfg, prompt, schema)
 
     scenes = _validate(data, n)
     scenes = _clamp_narration(scenes, words_per_scene)
     log.info("script: %d сцен, провайдер %s, стоимость $%.4f", len(scenes), cfg.llm_provider, cost)
     return {
-        "title": data.get("title", topic),
+        "title": data.get("title", title),
         "continuity": (data.get("continuity") or "").strip(),
         "scenes": scenes,
         "cost_usd": cost,
@@ -239,7 +315,7 @@ def _validate(data: dict, expected: int) -> list[dict]:
     return scenes
 
 
-def _via_openrouter(cfg: Config, prompt: str) -> tuple[dict, float]:
+def _via_openrouter(cfg: Config, prompt: str, schema: dict = None) -> tuple[dict, float]:
     """Сценарий через OpenRouter (совместим с OpenAI Chat Completions).
 
     `usage.include` просит вернуть реальную стоимость запроса — она точнее
@@ -251,7 +327,7 @@ def _via_openrouter(cfg: Config, prompt: str) -> tuple[dict, float]:
         "max_tokens": 4000,
         "response_format": {
             "type": "json_schema",
-            "json_schema": {"name": "scenes", "strict": True, "schema": SCENES_SCHEMA},
+            "json_schema": {"name": "scenes", "strict": True, "schema": schema or SCENES_SCHEMA},
         },
         "usage": {"include": True},
     }
@@ -305,7 +381,7 @@ def _via_openrouter(cfg: Config, prompt: str) -> tuple[dict, float]:
     return data, float(cost)
 
 
-def _via_anthropic(cfg: Config, prompt: str) -> tuple[dict, float]:
+def _via_anthropic(cfg: Config, prompt: str, schema: dict = None) -> tuple[dict, float]:
     """Сценарий через Anthropic напрямую."""
     # Импорт здесь, а не наверху: в безопасном режиме этот код не выполняется,
     # и воркер должен запускаться без пакета anthropic — как и без fal_client.
@@ -315,7 +391,7 @@ def _via_anthropic(cfg: Config, prompt: str) -> tuple[dict, float]:
     response = client.messages.create(
         model=cfg.llm_model,
         max_tokens=4000,
-        output_config={"format": {"type": "json_schema", "schema": SCENES_SCHEMA}},
+        output_config={"format": {"type": "json_schema", "schema": schema or SCENES_SCHEMA}},
         messages=[{"role": "user", "content": prompt}],
     )
 
