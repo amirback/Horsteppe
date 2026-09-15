@@ -8,8 +8,10 @@ import { isAdminReady } from "@/lib/supabase/env";
 export const runtime = "nodejs";
 
 const BUCKET = "media";
-export const MAX_FILES = 5;
-export const MAX_BYTES = 8 * 1024 * 1024;
+// Не экспортируются: Next разрешает в файле маршрута только свой набор
+// экспортов и падает на сборке от любого лишнего.
+const MAX_FILES = 5;
+const MAX_BYTES = 8 * 1024 * 1024;
 // Меньше этого снимок бесполезен: провайдер вернёт мыло, и никакая настройка
 // генерации этого не исправит. Порог совпадает с worker/references.py.
 const MIN_SIDE = 256;
