@@ -304,6 +304,20 @@ def concat_with_transitions(
     )
 
 
+def silence(out: Path, seconds: float) -> None:
+    """Тишина нужной длины.
+
+    Нужна там, где закадрового текста нет вовсе — например, когда человек
+    просто оживляет фотографию. Файл без аудиопотока формально валиден, но
+    часть плееров и соцсетей считает его битым, а проверка финального файла
+    требует звук. Тишина честнее отсутствия дорожки.
+    """
+    run_ffmpeg([
+        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+        "-t", f"{seconds:.3f}", "-c:a", "aac", "-b:a", "96k", str(out),
+    ])
+
+
 def concat_audio(audio_files: list[Path], out: Path) -> None:
     """Join narration files back to back — never crossfaded, so no word is cut."""
     inputs: list[str] = []

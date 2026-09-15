@@ -120,6 +120,9 @@ def test_plan_rows_fit_the_shots_table():
         "visual_prompt", "video_prompt", "camera_motion", "motion_requirement",
         "visual_importance", "narrative_importance", "continuity_group",
         "generation_mode", "status",
+        # Снимок товара, который кадр обязан показать. Колонка заведена ещё
+        # в 0003_shots.sql и до появления режима рекламы пустовала.
+        "first_frame_reference",
     }
     for s in _plan(duration=10.0):
         assert set(s) <= allowed, set(s) - allowed
@@ -367,6 +370,9 @@ def test_plan_rows_still_fit_the_shots_table():
         "visual_prompt", "video_prompt", "camera_motion", "motion_requirement",
         "visual_importance", "narrative_importance", "continuity_group",
         "generation_mode", "status",
+        # Снимок товара, который кадр обязан показать. Колонка заведена ещё
+        # в 0003_shots.sql и до появления режима рекламы пустовала.
+        "first_frame_reference",
     }
     for s in _thirty():
         assert set(s) <= allowed, set(s) - allowed

@@ -8,6 +8,7 @@ providers for scenes 1-3.
 from __future__ import annotations
 
 import logging
+import math
 import shutil
 from pathlib import Path
 
@@ -15,8 +16,10 @@ import httpx
 
 import budget
 import media
+import product_brief
 import safe_mode
 from config import COSTS, TMP_DIR, Config
+import db as db_module
 from db import Db
 from steps import image_step, render_step, script_step, shot_plan, tts_step, video_step
 
@@ -59,6 +62,113 @@ def real_video_coverage(shots: list[dict]) -> float:
     return round(real / total, 4)
 
 
+
+# Сколько секунд отдаёт провайдер за один вызов image-to-video. Из этого
+# числа складывается длина ролика в режиме «оживить фотографию».
+PROVIDER_CLIP_SEC = 5.0
+
+
+def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir, guard) -> None:
+    """Режим B: фотография человека → настоящее движущееся видео.
+
+    Отдельный путь, а не ветка внутри общего: здесь нет ни сценария, ни
+    закадрового текста, а источник кадра — снимок пользователя, который
+    запрещено подменять сгенерированным «похожим».
+
+    Если платный путь закрыт, кадр остаётся движением по картинке. Выдавать
+    это за настоящее видео нельзя (ТЗ §14), поэтому режим кадра честно
+    остаётся `image_motion`, и покрытие будет нулевым.
+    """
+    project_id = project["id"]
+    duration = float(project.get("duration_sec") or 10)
+    aspect = project.get("aspect_ratio") or cfg.video_format
+    brief = product_brief.VisualReferenceBrief(
+        creative_direction=project.get("topic") or "",
+        width=int(reference.get("width") or 0),
+        height=int(reference.get("height") or 0),
+    )
+    motion = brief.motion_prompt()
+
+    scenes = db.get_scenes(project_id)
+    if not scenes:
+        scenes = db.insert_scenes([{
+            "project_id": project_id, "order_index": 0,
+            # Озвучки нет: человек просил оживить кадр, а не рассказать историю.
+            "narration": "", "image_prompt": motion,
+        }])
+    scene = scenes[0]
+
+    shots = db.get_shots(project_id)
+    if not shots:
+        count = max(1, math.ceil(duration / PROVIDER_CLIP_SEC))
+        per_shot = round(duration / count, 3)
+        shots = db.insert_shots([{
+            "project_id": project_id, "scene_id": scene["id"], "order_index": i,
+            "purpose": "animate", "shot_type": "medium",
+            "timeline_duration": per_shot, "generation_duration": PROVIDER_CLIP_SEC,
+            "visual_prompt": motion, "video_prompt": motion,
+            "camera_motion": "push_in", "motion_requirement": "critical",
+            "visual_importance": 1.0, "narrative_importance": 1.0,
+            "first_frame_reference": reference["public_url"],
+            "image_url": reference["public_url"],
+        } for i in range(count)])
+        log.info("[%s] оживление фотографии: %d клип(ов) по %.1f с", project_id[:8], count, per_shot)
+
+    total = len(shots)
+    if safe_mode.is_paid_video_allowed(cfg):
+        for i, shot in enumerate(shots):
+            if shot.get("video_url"):
+                continue
+            db.set_progress(project_id, f"Оживляем фотографию: {i + 1}/{total}")
+            clip_path = work_dir / f"shot_{i:02d}_clip.mp4"
+            try:
+                cost = video_step.generate_clip(cfg, reference["public_url"], motion, clip_path)
+            except (video_step.VideoError, budget.BudgetExceeded) as e:
+                log.warning("[%s] клип %d не получился: %s", project_id[:8], i, e)
+                db.update_shot(shot["id"], failure_reason=str(e)[:500])
+                continue
+            url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
+            db.log_cost(project_id, "video", "fal", cost, f"shot {i}")
+            guard.record(cost, f"клип {i}")
+            db.update_shot(shot["id"], video_url=url, status="video_done",
+                           generation_mode="real_video", actual_cost_usd=cost)
+            shot.update(video_url=url, generation_mode="real_video")
+    else:
+        log.info("[%s] платное видео закрыто: фотография получит движение камеры", project_id[:8])
+
+    db.set_progress(project_id, "Монтаж…")
+    render_shots = []
+    for i, shot in enumerate(shots):
+        entry = {"duration": float(shot["timeline_duration"]), "motion": shot.get("camera_motion")}
+        if shot.get("video_url"):
+            entry["clip_path"] = _download(shot["video_url"], work_dir / f"shot_{i:02d}_clip.mp4")
+        else:
+            entry["image_path"] = _download(shot["image_url"], work_dir / f"shot_{i:02d}.jpg")
+        render_shots.append(entry)
+
+    quiet = work_dir / "silence.m4a"
+    media.silence(quiet, sum(e["duration"] for e in render_shots))
+    final_path = render_step.render_final(
+        [{"audio_path": quiet, "audio_duration": media.exact_duration_sec(quiet),
+          "narration": "", "shots": render_shots}],
+        work_dir, music_file=cfg.music_file or None, aspect=aspect,
+        transition_sec=0.0, subtitles=False,
+    )
+
+    db.set_progress(project_id, "Проверка результата…")
+    check = media.validate_final(final_path, media.frame_size(aspect))
+    if not check["ok"]:
+        raise RuntimeError("Проверка финального файла не пройдена: " + "; ".join(check["errors"]))
+
+    db.set_progress(project_id, "Загрузка результата…")
+    final_url = db.upload(f"projects/{project_id}/final.mp4", final_path.read_bytes(), "video/mp4")
+    db.insert_render(project_id, final_url, check["duration_sec"])
+    db.update_project(project_id, status="done", status_detail="Готово", error_message=None)
+    coverage = real_video_coverage(shots)
+    log.info("[%s] FINAL: %.2f с, клипов %d, настоящее видео %.0f%%",
+             project_id[:8], check["duration_sec"], len(shots), coverage * 100)
+
+
 def run_project(cfg: Config, db: Db, project_id: str) -> None:
     project = db.get_project(project_id)
     work_dir = TMP_DIR / project_id
@@ -69,13 +179,33 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
     # они сделаны: перерасход нельзя заметить задним числом.
     guard = budget.bind(project.get("max_budget_usd"))
 
+    # Снимки, которые принёс человек. Для обычного ролика их нет, и всё
+    # работает как раньше.
+    project_type = project.get("project_type") or "general_video"
+    references = db.get_references(project_id) if project_type != "general_video" else []
+    reference_urls = [r["public_url"] for r in references]
+
     try:
+        if project_type == "image_to_video":
+            primary = db_module.primary_of(references)
+            if primary is None:
+                raise RuntimeError("режим «оживить фотографию» требует загруженный снимок")
+            _animate_photo(cfg, db, project, primary, work_dir, guard)
+            return
+
         # ---- 1. Script (skipped if scenes already exist from a previous attempt)
         scenes = db.get_scenes(project_id)
         if not scenes:
             db.set_progress(project_id, "Пишем сценарий…")
+            brief = (
+                product_brief.ProductBrief.from_project(project, len(references))
+                if project_type == "product_ad" else None
+            )
+            if brief is not None:
+                log.info("[%s] реклама: «%s», снимков %d", project_id[:8],
+                         brief.product_name, len(references))
             script = script_step.generate_script(
-                cfg, project["topic"], project["style"], project["duration_sec"]
+                cfg, project["topic"], project["style"], project["duration_sec"], brief=brief
             )
             db.log_cost(project_id, "script", "anthropic", script["cost_usd"], cfg.llm_model)
             guard.record(script["cost_usd"], "сценарий")
@@ -135,7 +265,10 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             db.set_progress(project_id, "Раскадровка…")
             rows = []
             for i, (scene, plan) in enumerate(
-                zip(scenes, shot_plan.plan_film_shots(scenes, project.get("style") or "cinematic"))
+                zip(scenes, shot_plan.plan_film_shots(
+                    scenes, project.get("style") or "cinematic",
+                    references=reference_urls,
+                ))
             ):
                 for shot in plan:
                     rows.append(
@@ -150,6 +283,16 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
         for i, shot in enumerate(shots):
             if shot.get("image_url"):
                 continue
+            reference_url = shot.get("first_frame_reference")
+            if reference_url:
+                # Кадр товара — это снимок пользователя, а не «похожая»
+                # картинка от генератора. Ни один из доступных генераторов
+                # не держит форму и упаковку по образцу, и придуманный товар
+                # обесценивает рекламу целиком.
+                db.update_shot(shot["id"], image_url=reference_url, status="image_done")
+                shot.update(image_url=reference_url)
+                continue
+
             db.set_progress(project_id, f"Кадры: {i + 1}/{shot_total}")
             image_path = work_dir / f"shot_{i:02d}.png"
             cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)

@@ -103,9 +103,17 @@ def assign_generation_modes(shots: list[dict], mode: str = DEFAULT_MODE) -> floa
         shot["motion_requirement"] = "low"
 
     chosen = 0.0
-    # Порядок: важность, затем место в фильме — чтобы результат не зависел
-    # от случайностей сортировки.
-    for shot in sorted(shots, key=lambda s: (-float(s["visual_importance"]), s["order_index"])):
+    # Порядок: сперва кадры с настоящим снимком товара, затем важность, затем
+    # место в фильме. Товарный кадр без движения обесценивает всю рекламу:
+    # зритель видит фотографию там, где ждал показ.
+    for shot in sorted(
+        shots,
+        key=lambda s: (
+            0 if s.get("first_frame_reference") else 1,
+            -float(s["visual_importance"]),
+            s["order_index"],
+        ),
+    ):
         if chosen >= target * total:
             break
         shot["motion_requirement"] = "critical" if shot["purpose"] == HOOK_PURPOSE else "high"
@@ -192,6 +200,7 @@ def plan_scene_shots(
     motion_offset: int = 0,
     continuity: str = "",
     authored_shots: list[dict] | None = None,
+    references: list[str] | None = None,
 ) -> list[dict]:
     """Разбить одну сцену на кадры.
 
@@ -201,6 +210,12 @@ def plan_scene_shots(
     `motion_offset` — сколько кадров уже спланировано в фильме. Без него
     каждая сцена начинала движение заново, и весь ролик шёл «наезд, панорама,
     наезд, панорама»: формально склейки есть, а камера одна и та же.
+
+    `references` — публичные ссылки на фотографии товара. Кадру, который
+    сценарист пометил как товарный, достаётся не выдуманная картинка, а
+    настоящий снимок: ни один из доступных генераторов изображений не умеет
+    держать форму и упаковку по образцу, и «похожий товар» — это брак, а не
+    приближение.
     """
     # Кадры, придуманные сценаристом, лучше механической нарезки: он знает,
     # что происходит в сцене, и держит одних и тех же героев. Механика
@@ -239,6 +254,16 @@ def plan_scene_shots(
         # здесь ещё не видно, сколько кадров поместится в цель покрытия.
         requirement = "normal"
 
+        # Товарный кадр берёт снимок пользователя и встаёт в начало очереди
+        # за настоящим видео: именно на нём зритель узнаёт товар, и именно
+        # он обязан двигаться, а не зумиться.
+        wants_product = bool(references) and bool(
+            (authored[i] if i < len(authored) else {}).get("product_required")
+        )
+        reference_url = (
+            references[(motion_offset + i) % len(references)] if wants_product else None
+        )
+
         shots.append(
             {
                 "order_index": i,
@@ -255,6 +280,7 @@ def plan_scene_shots(
                 "video_prompt": (authored[i].get("action") if i < len(authored) else None) or text or narration,
                 "camera_motion": CAMERA_MOTIONS[(motion_offset + i) % len(CAMERA_MOTIONS)],
                 "motion_requirement": requirement,
+                "first_frame_reference": reference_url,
                 # Важность решает, куда уйдёт дорогая генерация: по ней кадры
                 # выстраиваются в очередь за настоящим видео.
                 "visual_importance": PURPOSE_IMPORTANCE[purpose],
@@ -319,6 +345,7 @@ def _shot_prompt(
 def plan_film_shots(
     scenes: list[dict], style: str = "cinematic", continuity: str = "",
     mode: str = DEFAULT_MODE, requested_sec: float | None = None,
+    references: list[str] | None = None,
 ) -> list[list[dict]]:
     """Спланировать кадры всего фильма подряд.
 
@@ -338,6 +365,7 @@ def plan_film_shots(
             motion_offset=offset,
             continuity=continuity,
             authored_shots=scene.get("shots"),
+            references=references,
         )
         offset += len(shots)
         plans.append(shots)
