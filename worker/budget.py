@@ -125,17 +125,32 @@ def current() -> BudgetGuard | None:
     return getattr(_local, "guard", None)
 
 
-@contextmanager
-def for_project(max_budget_usd: float | None, reserve_ratio: float = REPAIR_RESERVE_RATIO) -> Iterator[BudgetGuard]:
-    """Привязать страж к текущему проекту на время его сборки."""
+def bind(max_budget_usd: float | None, reserve_ratio: float = REPAIR_RESERVE_RATIO) -> BudgetGuard:
+    """Привязать страж к текущему проекту. Парная `unbind()` обязательна.
+
+    Пара bind/unbind существует рядом с контекстным менеджером не для красоты:
+    конвейер уже обёрнут в try/finally, и заворачивать его целиком в ещё один
+    отступ значит переписать файл ради одной строки.
+    """
     guard = BudgetGuard(max_budget_usd=max_budget_usd, reserve_ratio=reserve_ratio)
-    previous = current()
     _local.guard = guard
     if guard.has_ceiling:
         log.info(
             "[BUDGET] потолок $%.2f, резерв на починку $%.4f",
             float(max_budget_usd), guard.repair_reserve_usd,
         )
+    return guard
+
+
+def unbind() -> None:
+    _local.guard = None
+
+
+@contextmanager
+def for_project(max_budget_usd: float | None, reserve_ratio: float = REPAIR_RESERVE_RATIO) -> Iterator[BudgetGuard]:
+    """Привязать страж к текущему проекту на время его сборки."""
+    previous = current()
+    guard = bind(max_budget_usd, reserve_ratio)
     try:
         yield guard
     finally:

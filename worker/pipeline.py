@@ -13,9 +13,10 @@ from pathlib import Path
 
 import httpx
 
+import budget
 import media
 import safe_mode
-from config import TMP_DIR, Config
+from config import COSTS, TMP_DIR, Config
 from db import Db
 from steps import image_step, render_step, script_step, shot_plan, tts_step, video_step
 
@@ -63,6 +64,11 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
     work_dir = TMP_DIR / project_id
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    # Потолок расходов проекта. None — потолка нет, поведение как раньше.
+    # Страж живёт ровно эту сборку и отказывает платным вызовам до того, как
+    # они сделаны: перерасход нельзя заметить задним числом.
+    guard = budget.bind(project.get("max_budget_usd"))
+
     try:
         # ---- 1. Script (skipped if scenes already exist from a previous attempt)
         scenes = db.get_scenes(project_id)
@@ -72,6 +78,7 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 cfg, project["topic"], project["style"], project["duration_sec"]
             )
             db.log_cost(project_id, "script", "anthropic", script["cost_usd"], cfg.llm_model)
+            guard.record(script["cost_usd"], "сценарий")
             # Описание героев и мира вшивается в промпт каждой сцены прямо
             # здесь. Так оно переживает повтор: на второй попытке сценарий
             # заново не пишется, и хранить описание больше негде. Без него
@@ -110,6 +117,7 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             duration = media.exact_duration_sec(audio_path)
             url = db.upload(f"projects/{project_id}/scene_{i:02d}/audio.mp3", audio_path.read_bytes(), "audio/mpeg")
             db.log_cost(project_id, "tts", "elevenlabs", cost, f"scene {i}")
+            guard.record(cost, f"озвучка сцены {i}")
             db.update_scene(
                 scene["id"],
                 audio_url=url,
@@ -147,6 +155,7 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)
             url = db.upload(f"projects/{project_id}/shot_{i:02d}/image.png", image_path.read_bytes(), "image/png")
             db.log_cost(project_id, "image", cfg.image_providers[0], cost, f"shot {i}")
+            guard.record(cost, f"кадр {i}")
             db.update_shot(shot["id"], image_url=url, status="image_done", actual_cost_usd=cost)
             shot.update(image_url=url)
 
@@ -169,14 +178,17 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                         cfg, shot["image_url"],
                         shot.get("video_prompt") or shot["visual_prompt"], clip_path,
                     )
-                except video_step.VideoError as e:
-                    # Падение провайдера не должно уносить проект: кадр
-                    # остаётся движением по картинке, остальные идут дальше.
+                except (video_step.VideoError, budget.BudgetExceeded) as e:
+                    # Падение провайдера и конец денег кончаются одинаково:
+                    # кадр остаётся движением по картинке, остальные идут
+                    # дальше, причина записывается. Проект из-за одного кадра
+                    # не падает — но и покрытие не приписывается.
                     log.warning("[%s] кадр %d без настоящего видео: %s", project_id[:8], i, e)
                     db.update_shot(shot["id"], failure_reason=str(e)[:500])
                     continue
                 url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
                 db.log_cost(project_id, "video", "fal", cost, f"shot {i}")
+                guard.record(cost, f"видео кадра {i}")
                 # Только здесь кадр становится настоящим видео: движение по
                 # картинке засчитывать в real_video нельзя.
                 db.update_shot(
@@ -253,4 +265,5 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
         log.info("[%s] done: %s", project_id[:8], final_url)
 
     finally:
+        budget.unbind()
         shutil.rmtree(work_dir, ignore_errors=True)

@@ -119,3 +119,126 @@ class TestCheckpoint(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPipelineRespectsTheCeiling(unittest.TestCase):
+    """Потолок на настоящем конвейере: отказ обязан быть мягким.
+
+    Кончились деньги — ролик всё равно собирается, кадр остаётся движением по
+    картинке, причина записана, покрытие честно равно нулю. Падение проекта
+    из-за исчерпанного бюджета было бы худшим из возможных поведений: человек
+    остался бы и без денег, и без результата.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import os
+        import tempfile
+        import uuid
+
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import media
+        import pipeline
+        from steps import image_step, tts_step, video_step
+        from test_pipeline_e2e import FakeDb
+
+        cls.size = (180, 320)
+        cls._tmp = tempfile.TemporaryDirectory()
+        storage = Path(cls._tmp.name) / "storage"
+        storage.mkdir()
+
+        # Переменные обязательно вернуть: этот файл идёт по алфавиту раньше
+        # остальных, и «на время теста» открытый платный режим доставался
+        # соседям, которые проверяют поведение без ключей.
+        env = {
+            "MVP_SAFE_MODE": "0", "SCRIPT_MODE": "mock", "VIDEO_MODE": "provider",
+            "IMAGE_PROVIDER": "pollinations", "ELEVENLABS_API_KEY": "test",
+            "SUPABASE_URL": "https://example.supabase.co",
+            "SUPABASE_SERVICE_ROLE_KEY": "test", "VIDEO_FORMAT": "9:16",
+            "TRANSITION_SEC": "0", "SUBTITLES": "0",
+        }
+        cls._env_backup = {key: os.environ.get(key) for key in env}
+        os.environ.update(env)
+        from config import COSTS, Config
+
+        cls.attempts: list[str] = []
+
+        def fake_provider(cfg, image_url, motion_prompt, out_path):
+            """Заглушка, которая честно спрашивает разрешения, как настоящий шаг."""
+            cls.attempts.append(image_url)
+            safe_mode.require_paid(cfg, "генерация видео", COSTS["fal_video_per_clip"])
+            media.run_ffmpeg([
+                "-f", "lavfi",
+                "-i", f"testsrc2=size={cls.size[0]}x{cls.size[1]}:rate=30:duration=5",
+                "-pix_fmt", "yuv420p", str(out_path),
+            ])
+            return COSTS["fal_video_per_clip"]
+
+        def fake_image(cfg, prompt, out_path, index=0):
+            media.run_ffmpeg(["-f", "lavfi", "-i", f"color=c=gray:size={cls.size[0]}x{cls.size[1]}",
+                              "-frames:v", "1", str(out_path)])
+            return 0.0
+
+        def fake_tts(cfg, text, out_path):
+            media.run_ffmpeg(["-f", "lavfi", "-i", "anoisesrc=d=3:c=pink:a=0.3",
+                              "-ar", "44100", str(out_path)])
+            return 0.0
+
+        cls._originals = [
+            (video_step, "generate_clip", video_step.generate_clip),
+            (image_step, "generate_image", image_step.generate_image),
+            (tts_step, "synthesize", tts_step.synthesize),
+        ]
+        video_step.generate_clip = fake_provider
+        image_step.generate_image = fake_image
+        tts_step.synthesize = fake_tts
+        cls._format = media.FORMATS["9:16"]
+        media.FORMATS["9:16"] = cls.size
+
+        # Потолка хватает ровно на один клип: 0.50 минус резерв 15% = 0.425.
+        project_id = str(uuid.uuid4())
+        cls.db = FakeDb(storage, {
+            "id": project_id, "topic": "founder builds a startup at night",
+            "style": "cinematic", "duration_sec": 15, "aspect_ratio": "9:16",
+            "status": "queued", "max_budget_usd": 0.50,
+        })
+        pipeline.run_project(Config(), cls.db, project_id)
+        cls.shots = cls.db.shots
+        cls.pipeline = pipeline
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        import os
+
+        import media
+        for module, name, original in cls._originals:
+            setattr(module, name, original)
+        media.FORMATS["9:16"] = cls._format
+        for key, value in cls._env_backup.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        cls._tmp.cleanup()
+
+    def test_project_finished_despite_running_out_of_money(self) -> None:
+        self.assertEqual(self.db.project["status"], "done")
+        self.assertTrue(self.db.renders, "ролик должен быть собран")
+
+    def test_only_what_the_ceiling_allowed_was_paid_for(self) -> None:
+        paid = [s for s in self.shots if s.get("generation_mode") == "real_video"]
+        self.assertEqual(len(paid), 1, "потолка $0.50 хватает ровно на один клип")
+
+    def test_the_rest_were_denied_before_the_call(self) -> None:
+        denied = [s for s in self.shots if s.get("failure_reason")]
+        self.assertTrue(denied, "отказ должен быть записан в кадре")
+        self.assertIn("потолк", " ".join(s["failure_reason"] for s in denied).lower())
+
+    def test_provider_was_asked_more_times_than_it_was_paid(self) -> None:
+        """Отказ случается на чекпойнте, а не на стороне провайдера."""
+        self.assertGreater(len(self.attempts), 1)
+
+    def test_coverage_counts_only_what_was_actually_generated(self) -> None:
+        coverage = self.pipeline.real_video_coverage(self.shots)
+        self.assertGreater(coverage, 0.0)
+        self.assertLess(coverage, 0.7, "покрытие не приписывается отказанным кадрам")

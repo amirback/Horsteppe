@@ -32,7 +32,9 @@ def generate_clip(cfg: Config, image_public_url: str, motion_prompt: str, out_pa
     """Animate an image into a ~5s clip. `image_public_url` must be publicly
     reachable (we pass the Supabase Storage public URL). Returns cost in USD."""
     # Защита в глубину: конвейер и так не зовёт этот шаг в безопасном режиме.
-    safe_mode.require_paid(cfg, "генерация видео")
+    # Оценка передаётся до вызова — потолок проекта обязан успеть отказать,
+    # пока деньги ещё не потрачены.
+    safe_mode.require_paid(cfg, "генерация видео", COSTS["fal_video_per_clip"])
 
     os.environ.setdefault("FAL_KEY", cfg.fal_key)
     import fal_client
