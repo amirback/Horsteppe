@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import budget
 import media
 
 log = logging.getLogger("worker.safe")
@@ -55,13 +56,22 @@ def is_paid_video_allowed(cfg) -> bool:
     return is_paid_allowed(cfg) and cfg.video_mode == "provider"
 
 
-def require_paid(cfg, what: str) -> None:
-    """Бросить исключение, если платный вызов запрещён."""
+def require_paid(cfg, what: str, estimated_usd: float = 0.0, *, repair: bool = False) -> None:
+    """Бросить исключение, если платный вызов запрещён.
+
+    Две причины отказа, и они разные по смыслу. Первая — режим: денег тратить
+    нельзя вообще. Вторая — потолок проекта: деньги тратить можно, но на этот
+    вызов их уже не хватает. Проверка потолка стоит здесь, а не в шагах,
+    потому что здесь её нельзя обойти (CLAUDE.md §1).
+    """
     if not is_paid_allowed(cfg):
         raise PaidCallBlocked(
             f"{what}: платные вызовы отключены (MVP_SAFE_MODE=1). "
             f"Чтобы разрешить, задайте MVP_SAFE_MODE=0."
         )
+    guard = budget.current()
+    if guard is not None:
+        guard.authorize(estimated_usd, what, repair=repair)
 
 
 # ------------------------------------------------- бесплатные заменители --
