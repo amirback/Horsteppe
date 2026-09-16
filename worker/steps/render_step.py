@@ -108,6 +108,7 @@ def render_final(
                 media.make_motion_segment(
                     Path(shot["image_path"]), seg, shot["duration"] + extra, size,
                     shot.get("motion") or media.DEFAULT_MOTION,
+                    shot.get("framing"),
                 )
             shot_segments.append(seg)
 

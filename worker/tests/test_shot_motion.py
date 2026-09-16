@@ -149,3 +149,27 @@ def test_mixed_clip_and_image_segments_survive_concatenation(image, tmp_path):
     # media_duration_sec считает по реально декодированным кадрам, а не по
     # заголовку контейнера — именно это и ловит обрыв.
     assert abs(media.media_duration_sec(joined) - 6.0) < 0.3, "склейка потеряла картинку"
+
+
+def test_framing_makes_one_photo_into_different_shots(image, tmp_path):
+    """У рекламы обычно одно хорошее фото товара.
+
+    Показать его четыре раза подряд без изменений — верный признак
+    слайдшоу. Крупность плана решает это: тот же снимок, снятый ближе,
+    читается как другой кадр.
+    """
+    wide = tmp_path / "wide.mp4"
+    detail = tmp_path / "detail.mp4"
+    media.make_motion_segment(image, wide, DURATION, SIZE, "push_in", "wide")
+    media.make_motion_segment(image, detail, DURATION, SIZE, "push_in", "detail")
+    # Первые кадры двух версий обязаны отличаться: иначе крупность не сработала.
+    assert _difference(_frames(wide)[0], _frames(detail)[0]) > 2.0
+
+
+def test_unknown_framing_does_not_change_the_shot(image, tmp_path):
+    """Опечатка в крупности не должна менять кадр молча."""
+    plain = tmp_path / "plain.mp4"
+    weird = tmp_path / "weird.mp4"
+    media.make_motion_segment(image, plain, DURATION, SIZE, "push_in")
+    media.make_motion_segment(image, weird, DURATION, SIZE, "push_in", "нет-такой-крупности")
+    assert _difference(_frames(plain)[0], _frames(weird)[0]) < 1.0

@@ -250,6 +250,9 @@ def _render_plan(shots: list[dict], scenes: list[dict], work_dir) -> list[dict]:
         entry = {
             "duration": float(shot["timeline_duration"]),
             "motion": shot.get("camera_motion"),
+            # Крупность плана. Для товарных кадров это единственный способ
+            # сделать из одного снимка несколько разных кадров.
+            "framing": shot.get("shot_type"),
         }
         # Готовое настоящее видео используется всегда, каким бы ни был текущий
         # режим. Прежнее условие требовало ещё и режима provider, и оплаченный

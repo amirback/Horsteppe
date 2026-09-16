@@ -172,9 +172,25 @@ MOTIONS: dict[str, tuple[str, str, str]] = {
 DEFAULT_MOTION = "push_in"
 
 
+# Насколько близко стоит камера. Один и тот же снимок, снятый с разной
+# крупностью, читается как разные кадры — а не как одна фотография,
+# показанная четыре раза подряд.
+#
+# Это единственный способ получить монтаж из одного снимка товара: у рекламы
+# обычно есть ровно одно хорошее фото, и повторять его без изменений — верный
+# признак слайдшоу. Цена — часть пикселей уходит за рамку кадра, поэтому
+# деталь берёт не больше полутора крат.
+FRAMING_ZOOM: dict[str, float] = {
+    "wide": 1.0,
+    "medium": 1.18,
+    "close_up": 1.34,
+    "detail": 1.5,
+}
+
+
 def make_motion_segment(
     image: Path, out: Path, duration: float, size: tuple[int, int],
-    motion: str = DEFAULT_MOTION,
+    motion: str = DEFAULT_MOTION, framing: str | None = None,
 ) -> None:
     """Оживить неподвижную картинку движением камеры на `duration` секунд.
 
@@ -196,6 +212,12 @@ def make_motion_segment(
     zoom = zoom_expr.replace("{p}", progress)
     x = x_expr.replace("{p}", progress)
     y = y_expr.replace("{p}", progress)
+
+    # Крупность умножает зум целиком, поэтому движение внутри кадра остаётся
+    # прежним: наезд остаётся наездом, просто снят ближе.
+    base = FRAMING_ZOOM.get(framing or "", 1.0)
+    if base != 1.0:
+        zoom = f"({zoom})*{base}"
 
     # Увеличение вдвое до zoompan убирает дрожание, которое он даёт на 1x.
     #
