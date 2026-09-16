@@ -98,9 +98,22 @@ class Config:
     fal_image_model: str = field(
         default_factory=lambda: os.environ.get("FAL_IMAGE_MODEL", "fal-ai/flux/schnell")
     )
+    # Модель, которая делает настоящее видео из кадра. Это диффузия по
+    # времени, а не деформация одной картинки: именно она даёт параллакс
+    # фона, движение всего тела и связность между кадрами. Ken Burns не
+    # умеет ничего из этого и никогда не научится — там нет новых кадров.
+    #
+    # Цены проверены на странице провайдера 16.09.2026, за секунду готового
+    # видео:
+    #   Wan 2.5                $0.05  — дешевле всего
+    #   Kling 2.5 Turbo Pro    $0.07  — взята за основу
+    #   Veo 3                  $0.40  — впятеро дороже
+    # Было `kling-video/v2.1/standard`: та же цена за секунду, но поколением
+    # старше и не «pro». Менять на более дешёвую Wan имеет смысл тогда,
+    # когда счёт пойдёт на сотни роликов, а не на первые пробы.
     fal_video_model: str = field(
         default_factory=lambda: os.environ.get(
-            "FAL_VIDEO_MODEL", "fal-ai/kling-video/v2.1/standard/image-to-video"
+            "FAL_VIDEO_MODEL", "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
         )
     )
 
