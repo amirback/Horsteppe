@@ -23,8 +23,8 @@ log = logging.getLogger("worker.brief")
 # сценаристу.
 BEATS: dict[str, str] = {
     "hook": "HOOK: stop the scroll in the first second. No product yet, no brand name.",
-    "problem": "PROBLEM: the everyday annoyance this audience already recognises.",
-    "desire": "DESIRE: the state this audience wants, shown rather than claimed.",
+    "problem": "PROBLEM: the everyday annoyance, shown through objects and mess, not through an actor's face.",
+    "desire": "DESIRE: the state the audience wants, shown through the scene and the light, not through a model posing.",
     "product": "PRODUCT: the product itself, clearly recognisable, matching the reference photo.",
     "benefit": "BENEFIT: the single strongest benefit, demonstrated in use.",
     "second_benefit": "SECOND BENEFIT: one more concrete benefit, different from the first.",
@@ -174,6 +174,28 @@ NO_INVENTION = (
     "competitors. If a fact is not listed, it does not exist for this script."
 )
 
+# Почему в рекламе запрещены лица.
+#
+# Первая собранная реклама термокружки отдала три кадра из семи под
+# сгенерированную девушку, к товару отношения не имевшую. Смотрится это как
+# сток, а не как реклама: генератор кадров хуже всего справляется именно с
+# лицами — они первыми выдают, что картинка нарисована. Те же деньги и то же
+# время, потраченные на предмет, фактуру и руки, дают кадр, который от съёмки
+# почти не отличить.
+#
+# Это не про «нельзя показывать людей» вообще: человек в кадре появляется
+# руками, плечом, силуэтом, отражением. Запрещено ровно то, что ломается —
+# крупное узнаваемое лицо анонимной модели.
+NO_STOCK_FACES = (
+    "VISUAL RULE — no stock faces. Do NOT write shots built around a generated "
+    "person's face. No portraits, no models looking at camera, no close-ups of "
+    "anonymous faces. People appear only as hands, a shoulder, a silhouette, a "
+    "blurred figure in the background or a reflection. "
+    "The hero of every frame is the product itself, its texture and its "
+    "environment: steam, condensation, grain of the table, morning light, the "
+    "moment of use. Describe materials and light, not casting."
+)
+
 
 def ad_prompt(brief: ProductBrief, style: str, duration_sec: int, words_per_scene: int) -> str:
     """Задание сценаристу рекламы."""
@@ -192,6 +214,8 @@ def ad_prompt(brief: ProductBrief, style: str, duration_sec: int, words_per_scen
 
 {NO_INVENTION}
 
+{NO_STOCK_FACES}
+
 Structure — exactly {len(beats)} scenes, in this order:
 {beat_lines}
 
@@ -199,12 +223,14 @@ Requirements:
 - Narration in the SAME language as the product description. {words_per_scene}–{words_per_scene + 4} words per scene.
 - `purpose` of each scene is its beat name from the list above, lowercase.
 - `product_required` is true for any shot where the product must be visible and
-  recognisable, false for mood, audience or environment shots.
+  recognisable, false for mood, texture or environment shots.
 - {reference_note}
 - Each `image_prompt` is ENGLISH, describes one {style} advertising frame, vertical
   9:16, no text/captions/logos rendered in the image.
 - Give each scene 2-3 `shots`: different framings of the same moment — for a product
   beat that means hero shot plus a detail, not two unrelated pictures.
 - `continuity` fixes what must never change between shots: the product's shape,
-  colour and packaging, the palette, the lighting, and who is on screen.
+  colour and packaging, the palette, the lighting and the location. Do not put a
+  described person into `continuity` — it is pasted into every frame, and a
+  recurring generated face is exactly what makes an ad look like stock footage.
 - No emojis, no hashtags, no scene numbers in narration."""
