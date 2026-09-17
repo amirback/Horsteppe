@@ -117,6 +117,24 @@ class Config:
         )
     )
 
+    # Кто делает настоящее видео. Через запятую, пробуются по очереди —
+    # как у картинок. Один провайдер это одна точка отказа, и она уже
+    # сработала: аккаунт fal заблокировали, и весь платный путь встал.
+    video_provider: str = field(
+        default_factory=lambda: os.environ.get("VIDEO_PROVIDER", "fal").strip().lower()
+    )
+    # Replicate берёт дороже за секунду, зато выставляет счёт по факту в конце
+    # месяца. У fal минимальный платёж $10 — для двух-трёх пробных роликов это
+    # оказалось непреодолимым препятствием.
+    replicate_api_token: str = field(
+        default_factory=lambda: os.environ.get("REPLICATE_API_TOKEN", "").strip()
+    )
+    replicate_video_model: str = field(
+        default_factory=lambda: os.environ.get(
+            "REPLICATE_VIDEO_MODEL", "wavespeedai/wan-2.1-i2v-480p"
+        )
+    )
+
     # Единственный выключатель денег. Включён по умолчанию: платный путь
     # требует явного MVP_SAFE_MODE=0. Пустое значение тоже считается
     # безопасным — ошибка в .env не должна открывать кошелёк.
@@ -156,6 +174,13 @@ class Config:
     def image_providers(self) -> list[str]:
         """Цепочка провайдеров кадров в порядке приоритета."""
         return [x.strip() for x in self.image_provider.split(",") if x.strip()]
+
+    @property
+    def video_providers(self) -> list[str]:
+        """Цепочка провайдеров видео в порядке приоритета."""
+        known = ("fal", "replicate")
+        chain = [x.strip() for x in self.video_provider.split(",") if x.strip() in known]
+        return chain or ["fal"]
 
     @property
     def script_provider_chain(self) -> list[str]:
@@ -282,6 +307,9 @@ COSTS = {
     "together_image_per_call": float(os.environ.get("COST_TOGETHER_IMAGE", "0")),
     # Kling standard 5s clip on fal, approx
     "fal_video_per_clip": float(os.environ.get("COST_FAL_VIDEO_CLIP", "0.35")),
+    # Wan 2.1 480p на Replicate — $0.09 за секунду готового видео, проверено
+    # на странице цен 17.09.2026. Пятисекундный клип обходится в $0.45.
+    "replicate_video_per_clip": float(os.environ.get("COST_REPLICATE_VIDEO_CLIP", "0.45")),
     # Запасная оценка, если OpenRouter не вернул реальную стоимость запроса.
     "openrouter_fallback_per_call": float(os.environ.get("COST_OPENROUTER_CALL", "0.002")),
 }

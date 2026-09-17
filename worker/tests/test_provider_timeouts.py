@@ -46,9 +46,12 @@ class FakeConfig:
 
     mvp_safe_mode = False
     video_mode = "provider"
-    # Тест проверяет именно платный путь fal, поэтому провайдер задан явно.
+    # Тест проверяет именно платный путь fal, поэтому провайдер задан явно —
+    # и для картинок, и для видео: цепочка не должна увести вызов к соседу.
     image_provider = "fal"
     image_providers = ["fal"]
+    video_provider = "fal"
+    video_providers = ["fal"]
     fal_key = "test-key-not-a-secret"
     fal_image_model = "fake/image-model"
     fal_video_model = "fake/video-model"
