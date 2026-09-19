@@ -233,6 +233,27 @@ class ContentRejected(VideoError):
     """
 
 
+# Терминальные статусы отказа по содержанию. `nsfw` объявлен в их openapi,
+# `ip_detected` встречается в их же руководстве по разбору сбоев — принимаем
+# оба, чтобы новый повод для отказа не притворился сбоем сети.
+CONTENT_STATUSES = {"nsfw", "ip_detected"}
+
+
+def _json_or_fail(response, what: str) -> dict:
+    """Разобрать ответ, не уронив проект на странице капчи.
+
+    Защита от анти-бота: их руководство прямо описывает случай, когда вместо
+    JSON приходит HTML с проверкой. Без этой обёртки разбор падал бы
+    исключением мимо цепочки провайдеров — то есть кадр терялся бы там, где
+    сосед мог справиться.
+    """
+    try:
+        return response.json()
+    except ValueError as e:
+        body = (response.text or "")[:200].replace("\n", " ")
+        raise VideoError(f"Higgsfield вернул не JSON на {what}: {body}") from e
+
+
 def _higgsfield_headers(cfg: Config) -> dict:
     return {
         "Authorization": f"Key {cfg.higgsfield_credential}",
@@ -276,11 +297,11 @@ def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_
                     _higgsfield_cancel(client, headers, started)
                     raise VideoError(f"Higgsfield не отдал клип за {HIGGSFIELD_TIMEOUT_SEC:.0f} с")
                 time.sleep(HIGGSFIELD_POLL_SEC)
-                data = client.get(status_url, headers=headers).json()
+                data = _json_or_fail(client.get(status_url, headers=headers), "опросе статуса")
                 state = data.get("status") or "in_progress"
 
-            if state == "nsfw":
-                raise ContentRejected("Higgsfield отклонил кадр по содержанию (nsfw)")
+            if state in CONTENT_STATUSES:
+                raise ContentRejected(f"Higgsfield отклонил кадр по содержанию ({state})")
             if state != "completed":
                 raise VideoError(f"Higgsfield: {state} — {str(data.get('error'))[:300]}")
 
@@ -311,7 +332,7 @@ def _higgsfield_submit(client, url: str, headers: dict, payload: dict) -> dict:
     for attempt in range(1, HIGGSFIELD_ATTEMPTS + 1):
         response = client.post(url, headers=headers, json=payload)
         if response.status_code < 400:
-            return response.json()
+            return _json_or_fail(response, "постановке задачи")
         last = f"HTTP {response.status_code}: {response.text[:300]}"
         if response.status_code not in HIGGSFIELD_RETRY_CODES or attempt == HIGGSFIELD_ATTEMPTS:
             raise VideoError(f"Higgsfield отказал — {last}")

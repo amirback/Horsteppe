@@ -245,3 +245,65 @@ def test_missing_credentials_say_which_variables(cfg, monkeypatch, tmp_path):
 def test_higgsfield_joins_the_known_chain(cfg, monkeypatch):
     monkeypatch.setenv("VIDEO_PROVIDER", "higgsfield,fal,replicate")
     assert cfg().video_providers == ["higgsfield", "fal", "replicate"]
+
+
+class HtmlResponse(FakeResponse):
+    """Страница анти-бота вместо ответа API."""
+
+    def __init__(self):
+        super().__init__(status_code=200)
+        self.text = "<html><body>captcha-delivery</body></html>"
+
+    def json(self):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
+def test_anti_bot_page_does_not_crash_the_shot(cfg, hf, monkeypatch, tmp_path):
+    """Вместо JSON может прийти HTML с проверкой — их руководство это описывает.
+
+    Без обработки разбор падал бы исключением мимо цепочки провайдеров, и
+    кадр терялся бы там, где сосед мог справиться.
+    """
+    http = FakeHttp(posts=[HtmlResponse()], gets=[])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+    with pytest.raises(video_step.VideoError, match="не JSON"):
+        video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4")
+
+
+def test_anti_bot_page_lets_the_chain_continue(cfg, hf, monkeypatch, tmp_path):
+    monkeypatch.setenv("VIDEO_PROVIDER", "higgsfield,replicate")
+    http = FakeHttp(posts=[HtmlResponse()], gets=[])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+
+    def rescue(cfg_, image_url, prompt, out_path):
+        out_path.write_bytes(b"saved")
+        return 0.45
+
+    monkeypatch.setattr(video_step, "_via_replicate", rescue)
+    out = tmp_path / "c.mp4"
+    video_step.generate_clip(cfg(), "https://img/p.png", "push in", out)
+    assert out.read_bytes() == b"saved"
+
+
+def test_ip_detected_is_also_a_content_verdict(cfg, hf, monkeypatch, tmp_path):
+    """Новый повод для отказа не должен притворяться сбоем сети."""
+    started = {"request_id": "r1", "status": "queued",
+               "status_url": "https://api/s", "cancel_url": "https://api/c"}
+    http = FakeHttp(posts=[FakeResponse(started)], gets=[FakeResponse({"status": "ip_detected"})])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+    with pytest.raises(video_step.ContentRejected):
+        video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4")
+
+
+def test_timeout_cancels_the_abandoned_request(cfg, hf, monkeypatch, tmp_path):
+    """Брошенный запрос продолжает считаться и тратить кредиты."""
+    started = {"request_id": "r1", "status": "queued",
+               "status_url": "https://api/s", "cancel_url": "https://api/cancel"}
+    http = FakeHttp(posts=[FakeResponse(started), FakeResponse({})],
+                    gets=[FakeResponse({"status": "in_progress"})] * 4)
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+    monkeypatch.setattr(video_step, "HIGGSFIELD_TIMEOUT_SEC", -1)
+
+    with pytest.raises(video_step.VideoError, match="не отдал клип"):
+        video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4")
+    assert any("cancel" in url for url, _, _ in http.seen_posts), http.seen_posts
