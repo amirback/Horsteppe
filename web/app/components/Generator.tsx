@@ -36,6 +36,8 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
   const [cta, setCta] = useState("");
   const [goal, setGoal] = useState("sales");
   const [budget, setBudget] = useState("");
+  // Озвучка включена по умолчанию: так работали все прежние ролики.
+  const [voiceover, setVoiceover] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
   const [style, setStyle] = useState(s.style.options[0].value);
   const [duration, setDuration] = useState(s.duration.options[1].value);
@@ -142,6 +144,7 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
                   target_audience: audience.trim(),
                   ad_goal: goal,
                   call_to_action: cta.trim(),
+                  voiceover,
                 }
               : {},
         }),
@@ -285,6 +288,33 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
               inputMode="decimal"
             />
             <p className="mt-1 text-left text-[11px] leading-relaxed text-ink-soft/60">{p.fields.budgetHint}</p>
+          </div>
+
+          {/* Диктор нужен не всякой рекламе: у многих роликов только музыка
+              и картинка, а слова мешают. */}
+          <div className="mt-3 text-left">
+            <span className="nav-link text-ink-soft/60">{p.fields.voiceover}</span>
+            <div className="mt-2 flex gap-2">
+              {[true, false].map((on) => (
+                <button
+                  key={String(on)}
+                  type="button"
+                  onClick={() => setVoiceover(on)}
+                  disabled={busy}
+                  aria-pressed={voiceover === on}
+                  className={`nav-link rounded-full px-4 py-2 text-[13px] transition ${
+                    voiceover === on
+                      ? "bg-ink text-cream"
+                      : "border-[1.5px] border-ink/25 text-ink-soft hover:border-ink hover:text-ink"
+                  }`}
+                >
+                  {on ? p.fields.voiceoverOn : p.fields.voiceoverOff}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-left text-[11px] leading-relaxed text-ink-soft/60">
+              {voiceover ? p.fields.voiceoverHintOn : p.fields.voiceoverHintOff}
+            </p>
           </div>
         </div>
       ) : null}

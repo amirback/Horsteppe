@@ -38,6 +38,56 @@ def _download(url: str, dest: Path) -> Path:
     return dest
 
 
+END_CARD_SEC = 2.0
+
+
+def _wants_voiceover(project: dict) -> bool:
+    """Нужен ли диктор.
+
+    По умолчанию — да: так работали все ролики до появления выбора, и
+    менять поведение старых проектов молча нельзя.
+    """
+    brief = project.get("brief") or {}
+    return brief.get("voiceover", True) is not False
+
+
+def _plan_silent_scenes(db: Db, project_id: str, scenes: list[dict], requested_sec: float) -> None:
+    """Раздать сценам длительность, когда голоса не будет.
+
+    Обычно источник истины по времени — голос: сколько диктор говорит,
+    столько сцена и длится. Без него единственный ориентир — заказ
+    человека, и делится он поровну. Иначе раскадровка получила бы нули и
+    ролик вышел бы пустым.
+    """
+    share = round(max(requested_sec, 1.0) / max(len(scenes), 1), 3)
+    for scene in scenes:
+        if scene.get("audio_duration_sec"):
+            continue
+        db.update_scene(scene["id"], audio_duration_sec=share, status="audio_done")
+        scene.update(audio_duration_sec=share)
+
+
+def _end_card_for(project: dict) -> dict | None:
+    """Финальная карточка рекламы: название бренда и призыв.
+
+    Только для рекламы товара: у обычного ролика бренда нет, и вешать чужое
+    название в конец истории незачем. Текст набирается шрифтом — генератор
+    кадров вместо «BOIAGE» рисует похожие на буквы закорючки, а имя бренда
+    ошибок не прощает.
+    """
+    if (project.get("project_type") or "general_video") != "product_ad":
+        return None
+    brief = project.get("brief") or {}
+    title = (brief.get("product_name") or "").strip()
+    if not title:
+        return None
+    return {
+        "title": title,
+        "subtitle": (brief.get("call_to_action") or brief.get("product_description") or "").strip(),
+        "duration": END_CARD_SEC,
+    }
+
+
 def _wants_real_video(shot: dict) -> bool:
     """Нужно ли этому кадру настоящее видео.
 
@@ -266,11 +316,20 @@ def _render_plan(shots: list[dict], scenes: list[dict], work_dir) -> list[dict]:
 
     plan = []
     for i, scene in enumerate(scenes):
+        shots_of_scene = by_scene.get(scene["id"], [])
+        if scene.get("audio_url"):
+            audio_path = _download(scene["audio_url"], work_dir / f"scene_{i:02d}.mp3")
+        else:
+            # Озвучку выключили: вместо голоса кладём тишину ровно на длину
+            # кадров сцены. Монтаж считает длительность по звуку, и без
+            # дорожки сцена схлопнулась бы в ноль.
+            audio_path = work_dir / f"scene_{i:02d}_silence.m4a"
+            media.silence(audio_path, sum(s["duration"] for s in shots_of_scene))
         plan.append({
-            "audio_path": _download(scene["audio_url"], work_dir / f"scene_{i:02d}.mp3"),
+            "audio_path": audio_path,
             "audio_duration": scene["audio_duration_sec"],
-            "narration": scene.get("narration", ""),
-            "shots": by_scene.get(scene["id"], []),
+            "narration": scene.get("narration", "") if scene.get("audio_url") else "",
+            "shots": shots_of_scene,
         })
     return plan
 
@@ -442,8 +501,16 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
 
         total = len(scenes)
 
-        # ---- 2. TTS per scene (before visuals: narration length = segment length)
-        for i, scene in enumerate(scenes):
+        # ---- 2. Звук сцены.
+        #
+        # Диктор нужен не всякой рекламе: у многих роликов только музыка и
+        # картинка, а текст живёт в субтитрах или не нужен вовсе. Когда
+        # озвучка выключена, источником длительности становится заказ
+        # человека, а не длина голоса — делим поровну между сценами.
+        voiceover = _wants_voiceover(project)
+        if not voiceover:
+            _plan_silent_scenes(db, project_id, scenes, float(project.get("duration_sec") or 0))
+        for i, scene in enumerate(scenes if voiceover else []):
             if scene.get("audio_url"):
                 continue
             db.set_progress(project_id, f"Озвучка: сцена {i + 1}/{total}")
@@ -600,7 +667,10 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 music_file=cfg.music_file or None,
                 aspect=aspect,
                 transition_sec=cfg.transition_sec,
-                subtitles=cfg.subtitles,
+                # Субтитры без озвучки не нужны: подписывать нечего, а
+                # закадровый текст в таком ролике не звучит вовсе.
+                subtitles=cfg.subtitles and voiceover,
+                end_card=_end_card_for(project),
             )
             db.set_progress(project_id, "Проверка результата…")
             report = quality.inspect(

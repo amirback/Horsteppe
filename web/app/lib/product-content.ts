@@ -35,6 +35,11 @@ export type ProductDict = {
     goalOptions: Option[];
     budget: string;
     budgetHint: string;
+    voiceover: string;
+    voiceoverOn: string;
+    voiceoverOff: string;
+    voiceoverHintOn: string;
+    voiceoverHintOff: string;
   };
   animate: { motion: string; motionPlaceholder: string };
   submitAd: string;
@@ -73,6 +78,11 @@ export const productStudio: Record<Lang, ProductDict> = {
       ],
       budget: "Generation budget, $",
       budgetHint: "Leave empty for no limit. Real video costs about $0.35 per five seconds.",
+      voiceover: "Voiceover",
+      voiceoverOn: "With voice",
+      voiceoverOff: "No voice",
+      voiceoverHintOn: "A narrator reads the script, subtitles are burned in.",
+      voiceoverHintOff: "No narration, no subtitles — the picture carries the ad. Music has to be supplied separately; the service has no track of its own yet.",
     },
     animate: {
       motion: "Describe the motion",
@@ -127,6 +137,11 @@ export const productStudio: Record<Lang, ProductDict> = {
       ],
       budget: "Бюджет генерации, $",
       budgetHint: "Пусто — без потолка. Настоящее видео стоит около $0.35 за пять секунд.",
+      voiceover: "Озвучка",
+      voiceoverOn: "С голосом",
+      voiceoverOff: "Без голоса",
+      voiceoverHintOn: "Диктор читает сценарий, субтитры вшиваются в кадр.",
+      voiceoverHintOff: "Без диктора и субтитров — рекламу несёт картинка. Музыку пока нужно добавлять отдельно: своей фонограммы у сервиса нет.",
     },
     animate: {
       motion: "Опишите движение",
@@ -181,6 +196,11 @@ export const productStudio: Record<Lang, ProductDict> = {
       ],
       budget: "Генерация бюджеті, $",
       budgetHint: "Бос — шектеусіз. Нақты видео бес секундына шамамен $0.35 тұрады.",
+      voiceover: "Дауыстық сүйемелдеу",
+      voiceoverOn: "Дауыспен",
+      voiceoverOff: "Дауыссыз",
+      voiceoverHintOn: "Диктор сценарийді оқиды, субтитр кадрға енгізіледі.",
+      voiceoverHintOff: "Дикторсыз және субтитрсіз — жарнаманы сурет алып жүреді. Музыканы бөлек қосу керек: сервисте өз фонограммасы жоқ.",
     },
     animate: {
       motion: "Қозғалысты сипаттаңыз",
