@@ -101,11 +101,53 @@ def test_shots_of_one_scene_share_a_continuity_group():
     assert {s["continuity_group"] for s in shots} == {"scene-2"}
 
 
-def test_narration_is_split_without_losing_words():
+def test_video_prompt_describes_motion_not_the_frame():
+    """Руководство Higgsfield: кадр модель уже видит, пересказ ей не нужен.
+
+    Раньше в промпт видео ехал закадровый текст — на языке зрителя и про
+    содержимое кадра. Модель тратила внимание на описание вместо движения.
+    """
     narration = "один два три четыре пять шесть семь восемь девять десять"
-    shots = _plan(duration=12.0, narration=narration)
-    joined = " ".join(s["video_prompt"] for s in shots).split()
-    assert joined == narration.split()
+    for s in _plan(duration=12.0, narration=narration):
+        assert "один" not in s["video_prompt"]
+        assert any(
+            word in s["video_prompt"]
+            for word in ("push", "pull", "pan", "tilt", "camera")
+        ), s["video_prompt"]
+
+
+def test_camera_move_matches_between_free_and_paid_paths():
+    """Одно и то же движение просим и у FFmpeg, и у видео-модели.
+
+    Иначе переход с бесплатного пути на платный молча менял бы замысел
+    кадра: зум по картинке влево, а клип — вправо.
+    """
+    for s in _plan(duration=12.0):
+        phrase = shot_plan.CAMERA_PHRASES[s["camera_motion"]]
+        assert s["video_prompt"].startswith(phrase)
+
+
+def test_image_prompt_stays_within_the_documented_budget():
+    """«Models distort with very long prompts» — потолок около 200 токенов.
+
+    Замер на собранной рекламе показал 1316 знаков на кадр, и кадры
+    выходили пустыми и расфокусированными.
+    """
+    long_world = "Recurring world: " + "a very detailed description of the place, " * 20
+    shots = _plan(duration=12.0, continuity=long_world,
+                  authored_shots=[{"framing": "wide shot", "action": "steam rises"},
+                                  {"framing": "close-up", "action": "hand lifts the cup"}])
+    for s in shots:
+        assert len(s["visual_prompt"]) <= shot_plan.MAX_PROMPT_CHARS, len(s["visual_prompt"])
+
+
+def test_trimming_keeps_what_makes_shots_different():
+    """Под нож идёт общий вид сцены, а не крупность с действием."""
+    long_world = "Recurring world: " + "very long unchanging description, " * 25
+    shots = _plan(duration=9.0, continuity=long_world,
+                  authored_shots=[{"framing": "extreme close-up", "action": "steam curls"}])
+    assert "extreme close-up" in shots[0]["visual_prompt"]
+    assert "steam curls" in shots[0]["visual_prompt"]
 
 
 def test_ken_burns_is_not_passed_off_as_real_video():

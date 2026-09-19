@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 
 log = logging.getLogger("worker.shot_plan")
 
@@ -70,6 +71,26 @@ COVERAGE_TARGETS: dict[str, float] = {
 DEFAULT_MODE = "smart"
 
 REAL_VIDEO_REQUIREMENTS = ("critical", "high")
+
+# Потолок длины промпта картинки. Руководство Higgsfield: около 200 токенов,
+# дальше «models distort with very long prompts». Для смеси английского с
+# именами собственными это примерно 600 знаков — с запасом в безопасную
+# сторону. Замер на собранной рекламе: было 1316 знаков на кадр.
+MAX_PROMPT_CHARS = int(os.environ.get("MAX_IMAGE_PROMPT_CHARS", "600"))
+
+# Движение камеры словами, понятными видео-модели. Ключи совпадают с
+# CAMERA_MOTIONS: то же движение просим и у FFmpeg, и у провайдера, поэтому
+# переход между бесплатным и платным путём не меняет замысел кадра.
+CAMERA_PHRASES: dict[str, str] = {
+    "push_in": "slow cinematic push in",
+    "pull_out": "slow cinematic pull back",
+    "pan_left": "smooth camera pan to the left",
+    "pan_right": "smooth camera pan to the right",
+    "tilt_up": "smooth camera tilt upward",
+    "tilt_down": "smooth camera tilt downward",
+    "static": "locked-off camera, only the subject moves",
+}
+DEFAULT_CAMERA_PHRASE = "push_in"
 
 
 def preferred_mode(shot: dict) -> str:
@@ -239,13 +260,15 @@ def plan_scene_shots(
         count += 1
 
     durations = split_durations(audio_duration_sec, count)
-    texts = split_narration(narration, count)
+    # Закадровый текст по кадрам больше не режется: в промпт картинки он не
+    # попадал никогда (он на языке зрителя), а в промпт видео попадать не
+    # должен — там нужно движение, а не пересказ кадра.
 
     is_first_scene = scene_index == 0
     is_last_scene = scene_index == scene_count - 1
 
     shots: list[dict] = []
-    for i, (seconds, text) in enumerate(zip(durations, texts)):
+    for i, seconds in enumerate(durations):
         first_of_film = is_first_scene and i == 0
         last_of_film = is_last_scene and i == count - 1
 
@@ -274,10 +297,16 @@ def plan_scene_shots(
                 # равно длине в монтаже.
                 "generation_duration": seconds,
                 "visual_prompt": _shot_prompt(
-                    image_prompt, text, i, count, continuity,
+                    image_prompt, i, count, continuity,
                     authored[i] if i < len(authored) else None,
                 ),
-                "video_prompt": (authored[i].get("action") if i < len(authored) else None) or text or narration,
+                # Промпт для видео-модели: движение камеры плюс короткое
+                # описание того, что шевелится в кадре. Сам кадр модель
+                # получает картинкой и пересказа не ждёт.
+                "video_prompt": motion_prompt(
+                    CAMERA_MOTIONS[(motion_offset + i) % len(CAMERA_MOTIONS)],
+                    (authored[i].get("action") if i < len(authored) else "") or "",
+                ),
                 "camera_motion": CAMERA_MOTIONS[(motion_offset + i) % len(CAMERA_MOTIONS)],
                 "motion_requirement": requirement,
                 "first_frame_reference": reference_url,
@@ -315,7 +344,7 @@ def _purpose_for(index: int, count: int, first_of_film: bool, last_of_film: bool
 
 
 def _shot_prompt(
-    scene_prompt: str, shot_text: str, index: int, count: int,
+    scene_prompt: str, index: int, count: int,
     continuity: str = "", authored: dict | None = None,
 ) -> str:
     """Промпт кадра.
@@ -327,19 +356,79 @@ def _shot_prompt(
 
     Закадровый текст в промпт не попадает: он на языке зрителя, а генератор
     картинок понимает английский, и смешение языков портит кадр.
+
+    Длина ограничена. Руководство Higgsfield по промптам говорит прямо:
+    «models distort with very long prompts», потолок около 200 токенов. Замер
+    на собранной рекламе показал 1316 знаков на кадр — втрое больше нормы, и
+    кадры выходили пустыми и расфокусированными. Когда бюджет исчерпан,
+    первым выбрасывается общий вид сцены: он почти дословно повторяет
+    описание мира, а крупность и действие — единственное, чем кадры
+    отличаются друг от друга.
     """
-    head = f"{continuity.strip()}. " if continuity.strip() else ""
+    world = continuity.strip()
 
     if authored:
         framing = (authored.get("framing") or "").strip()
         action = (authored.get("action") or "").strip()
-        body = ", ".join(x for x in (framing, action) if x)
-        return f"{head}{scene_prompt}. {body}"
+        tail = ", ".join(x for x in (framing, action) if x)
+    elif count == 1:
+        tail = ""
+    else:
+        options = ("wide establishing shot", "medium shot", "close-up", "detail shot")
+        tail = options[index % len(options)]
 
-    if count == 1:
-        return f"{head}{scene_prompt}"
-    framing = ("wide establishing shot", "medium shot", "close-up", "detail shot")
-    return f"{head}{scene_prompt}. {framing[index % len(framing)]}"
+    return _fit(world, scene_prompt.strip(), tail)
+
+
+def _fit(world: str, scene: str, tail: str) -> str:
+    """Собрать промпт в бюджет, жертвуя по порядку значимости.
+
+    Первым выбрасывается общий вид сцены: он почти дословно повторяет
+    описание мира. Вторым сокращается сам мир. Крупность и действие не
+    трогаются никогда — это единственное, чем кадры отличаются друг от
+    друга, и ради чего вся раскадровка затевалась.
+    """
+    parts = [p for p in (world, scene, tail) if p]
+    full = ". ".join(parts)
+    if len(full) <= MAX_PROMPT_CHARS:
+        return full
+
+    without_scene = ". ".join(p for p in (world, tail) if p)
+    if len(without_scene) <= MAX_PROMPT_CHARS:
+        return without_scene
+
+    if not tail:
+        return _clip(world or scene, MAX_PROMPT_CHARS)
+
+    room = MAX_PROMPT_CHARS - len(tail) - 2
+    if room < 40:
+        return _clip(tail, MAX_PROMPT_CHARS)
+    return f"{_clip(world, room)}. {tail}"
+
+
+def _clip(text: str, limit: int) -> str:
+    """Обрезать по границе фразы, а не по букве."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    edge = max(cut.rfind(". "), cut.rfind(", "))
+    return (cut[:edge] if edge > limit // 2 else cut).rstrip(" ,.")
+
+
+def motion_prompt(camera_motion: str, subject_motion: str = "") -> str:
+    """Промпт для модели «кадр → видео»: только движение.
+
+    Руководство Higgsfield: «--start-image anchors the first frame. Prompt
+    describes motion. Don't redescribe the static frame — model already has
+    it.» Мы же до сих пор пересказывали туда содержимое кадра, и модель
+    тратила внимание на описание вместо движения.
+    """
+    camera = CAMERA_PHRASES.get(camera_motion or "", CAMERA_PHRASES[DEFAULT_CAMERA_PHRASE])
+    subject = (subject_motion or "").strip().rstrip(".")
+    if not subject:
+        return camera
+    return f"{camera}, {subject}"
 
 
 def plan_film_shots(
