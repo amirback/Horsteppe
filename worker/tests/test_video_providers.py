@@ -104,3 +104,144 @@ def test_replicate_without_a_token_says_so_plainly(cfg, monkeypatch, tmp_path):
 def test_output_url_is_found_in_every_shape(output, expected):
     """Модели отдают ссылку то строкой, то списком, то объектом."""
     assert video_step._replicate_output_url(output) == expected
+
+
+# --- Higgsfield: контракт взят из их openapi.json ---------------------------
+
+class FakeResponse:
+    def __init__(self, payload=None, status_code=200, content=b"clip"):
+        self._payload = payload or {}
+        self.status_code = status_code
+        self.content = content
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        pass
+
+
+class FakeHttp:
+    """Подделка httpx.Client: записывает вызовы, отдаёт заготовленные ответы."""
+
+    def __init__(self, posts, gets):
+        self.posts = list(posts)
+        self.gets = list(gets)
+        self.seen_posts: list[tuple] = []
+        self.seen_gets: list[str] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def post(self, url, headers=None, json=None, **kw):
+        self.seen_posts.append((url, headers, json))
+        return self.posts.pop(0)
+
+    def get(self, url, headers=None, **kw):
+        self.seen_gets.append(url)
+        return self.gets.pop(0)
+
+
+@pytest.fixture
+def hf(monkeypatch):
+    monkeypatch.setenv("HF_API_KEY", "id-not-a-secret")
+    monkeypatch.setenv("HF_API_SECRET", "secret-not-a-secret")
+    monkeypatch.setenv("HIGGSFIELD_POLL_SEC", "0")
+    monkeypatch.setattr(video_step, "HIGGSFIELD_POLL_SEC", 0)
+    return None
+
+
+def test_credential_is_assembled_as_key_and_secret(cfg, hf):
+    assert cfg().higgsfield_credential == "id-not-a-secret:secret-not-a-secret"
+
+
+def test_single_key_variable_wins(cfg, monkeypatch, hf):
+    monkeypatch.setenv("HF_KEY", "whole:thing")
+    assert cfg().higgsfield_credential == "whole:thing"
+
+
+def test_request_matches_the_documented_schema(cfg, hf, monkeypatch, tmp_path):
+    """Обязательные поля — prompt и image_url, длительность из набора."""
+    started = {"request_id": "r1", "status": "queued",
+               "status_url": "https://api/requests/r1/status",
+               "cancel_url": "https://api/requests/r1/cancel"}
+    done = {"status": "completed", "video": {"url": "https://api/clip.mp4"}}
+    http = FakeHttp(posts=[FakeResponse(started)],
+                    gets=[FakeResponse(done), FakeResponse(content=b"real-clip")])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+
+    out = tmp_path / "c.mp4"
+    video_step._via_higgsfield(cfg(), "https://img/p.png", "slow push in", out)
+
+    url, headers, payload = http.seen_posts[0]
+    assert url.endswith("/kling-video/v2.5-turbo/pro/image-to-video")
+    assert headers["Authorization"].startswith("Key ")
+    assert payload["prompt"] == "slow push in"
+    assert payload["image_url"] == "https://img/p.png"
+    assert payload["duration"] in (5, 10)
+    assert out.read_bytes() == b"real-clip"
+
+
+def test_nsfw_is_a_verdict_not_a_provider_outage(cfg, hf, monkeypatch, tmp_path):
+    """Отклонённое по содержанию не отдаём соседу — он отклонит так же.
+
+    Цепочка обязана остановиться: второй вызов стоил бы денег за тот же
+    отказ.
+    """
+    started = {"request_id": "r1", "status": "queued",
+               "status_url": "https://api/requests/r1/status", "cancel_url": "https://api/c"}
+    http = FakeHttp(posts=[FakeResponse(started)], gets=[FakeResponse({"status": "nsfw"})])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+
+    with pytest.raises(video_step.ContentRejected):
+        video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4")
+
+
+def test_content_rejection_stops_the_whole_chain(cfg, monkeypatch, tmp_path):
+    monkeypatch.setenv("VIDEO_PROVIDER", "higgsfield,fal")
+
+    def rejected(*a, **kw):
+        raise video_step.ContentRejected("nsfw")
+
+    def must_not_run(*a, **kw):
+        raise AssertionError("второй провайдер не должен вызываться после отказа по содержанию")
+
+    monkeypatch.setattr(video_step, "_via_higgsfield", rejected)
+    monkeypatch.setattr(video_step, "_via_fal", must_not_run)
+
+    with pytest.raises(video_step.ContentRejected):
+        video_step.generate_clip(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4")
+
+
+def test_overload_is_retried_then_succeeds(cfg, hf, monkeypatch, tmp_path):
+    """Один отказ 429 больше не роняет кадр."""
+    started = {"request_id": "r1", "status": "completed", "status_url": "https://api/s",
+               "cancel_url": "https://api/c", "video": {"url": "https://api/clip.mp4"}}
+    http = FakeHttp(
+        posts=[FakeResponse({"detail": "rate limited"}, status_code=429), FakeResponse(started)],
+        gets=[FakeResponse(content=b"clip")],
+    )
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+    monkeypatch.setattr(video_step, "HIGGSFIELD_ATTEMPTS", 3)
+    import time as _t
+    monkeypatch.setattr(_t, "sleep", lambda s: None)
+
+    out = tmp_path / "c.mp4"
+    video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", out)
+    assert len(http.seen_posts) == 2
+
+
+def test_missing_credentials_say_which_variables(cfg, monkeypatch, tmp_path):
+    for var in ("HF_KEY", "HF_API_KEY", "HF_API_SECRET"):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(video_step.VideoError, match="HF_KEY"):
+        video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4")
+
+
+def test_higgsfield_joins_the_known_chain(cfg, monkeypatch):
+    monkeypatch.setenv("VIDEO_PROVIDER", "higgsfield,fal,replicate")
+    assert cfg().video_providers == ["higgsfield", "fal", "replicate"]

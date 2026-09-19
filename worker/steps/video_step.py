@@ -5,6 +5,9 @@
 она уже сработала: аккаунт fal заблокировали за исчерпанный баланс, и весь
 платный путь встал, хотя клип мог сделать кто-то другой.
 
+* `higgsfield` — тот самый сервис, по которому равняется продукт. Kling 2.5
+  Turbo Pro напрямую у источника; схема полей взята из его openapi.json, а не
+  угадана. Единственный из трёх, кто отличает отказ по содержанию от сбоя.
 * `fal` — Kling и соседи. Дешевле за секунду, но требует предоплаты, и
   минимальный платёж там $10.
 * `replicate` — оплата по факту в конце месяца, предоплаты нет. Дороже за
@@ -58,9 +61,16 @@ def generate_clip(
     errors: list[str] = []
     for position, provider in enumerate(chain, start=1):
         try:
+            if provider == "higgsfield":
+                return _via_higgsfield(cfg, image_public_url, motion_prompt, out_path)
             if provider == "replicate":
                 return _via_replicate(cfg, image_public_url, motion_prompt, out_path)
             return _via_fal(cfg, image_public_url, motion_prompt, out_path, model, price)
+        except ContentRejected:
+            # Отклонение по содержанию — приговор для всей цепочки. Что
+            # отвергла одна модель, отвергнет и соседняя, а вызов к ней
+            # будет стоить денег.
+            raise
         except VideoError as e:
             errors.append(f"{provider}: {e}")
             if position < len(chain):
@@ -197,3 +207,130 @@ def _replicate_output_url(output) -> str | None:
             if output.get(key):
                 return _replicate_output_url(output[key])
     return None
+
+
+# ------------------------------------------------------------- higgsfield --
+
+HIGGSFIELD_BASE = os.environ.get("HIGGSFIELD_BASE_URL", "https://api.higgsfield.ai").rstrip("/")
+HIGGSFIELD_POLL_SEC = float(os.environ.get("HIGGSFIELD_POLL_SEC", "5"))
+HIGGSFIELD_TIMEOUT_SEC = float(os.environ.get("HIGGSFIELD_TIMEOUT_SEC", "900"))
+# Коды, на которых повтор осмыслен: перегрузка и временные сбои. Взято из
+# стратегии повторов их же SDK — она сама так и настроена.
+HIGGSFIELD_RETRY_CODES = {408, 429, 500, 502, 503, 504}
+HIGGSFIELD_ATTEMPTS = 3
+# Длительность клипа. У Kling допустимы 5 и 10 секунд, у Hailuo — 6 и 10;
+# пять берём потому, что монтаж всё равно режет клип под длину кадра.
+HIGGSFIELD_DURATION = int(os.environ.get("HIGGSFIELD_DURATION_SEC", "5"))
+
+
+class ContentRejected(VideoError):
+    """Кадр отклонён по содержанию.
+
+    Отдельный класс нужен, чтобы цепочка НЕ шла к следующему провайдеру:
+    отклонённое одной моделью отклонит и соседняя, а вызов будет стоить
+    денег. У Higgsfield это отдельный терминальный статус `nsfw`, а не
+    ошибка сети — мы это различие сохраняем.
+    """
+
+
+def _higgsfield_headers(cfg: Config) -> dict:
+    return {
+        "Authorization": f"Key {cfg.higgsfield_credential}",
+        "Content-Type": "application/json",
+    }
+
+
+def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> float:
+    """Клип через собственный API Higgsfield.
+
+    Схема запроса взята из их openapi.json, а не угадана: обязательны
+    `prompt` и `image_url`, длительность выбирается из фиксированного набора.
+    Запрос асинхронный — ответ забирается опросом по выданному адресу.
+
+    Промпт сюда приходит уже как описание движения: их же руководство по
+    промптам требует не пересказывать кадр, который модель и так видит.
+    """
+    import time
+
+    if not cfg.higgsfield_credential:
+        raise VideoError("HF_KEY (или HF_API_KEY и HF_API_SECRET) не задан")
+
+    model = cfg.higgsfield_video_model.strip("/")
+    payload = {
+        "prompt": motion_prompt,
+        "image_url": image_public_url,
+        "duration": HIGGSFIELD_DURATION,
+    }
+    headers = _higgsfield_headers(cfg)
+
+    try:
+        with httpx.Client(timeout=120) as client:
+            started = _higgsfield_submit(client, f"{HIGGSFIELD_BASE}/{model}", headers, payload)
+            deadline = time.monotonic() + HIGGSFIELD_TIMEOUT_SEC
+            status_url = started.get("status_url") or f"{HIGGSFIELD_BASE}/requests/{started['request_id']}/status"
+
+            state = started.get("status") or "queued"
+            data = started
+            while state in ("queued", "in_progress"):
+                if time.monotonic() > deadline:
+                    _higgsfield_cancel(client, headers, started)
+                    raise VideoError(f"Higgsfield не отдал клип за {HIGGSFIELD_TIMEOUT_SEC:.0f} с")
+                time.sleep(HIGGSFIELD_POLL_SEC)
+                data = client.get(status_url, headers=headers).json()
+                state = data.get("status") or "in_progress"
+
+            if state == "nsfw":
+                raise ContentRejected("Higgsfield отклонил кадр по содержанию (nsfw)")
+            if state != "completed":
+                raise VideoError(f"Higgsfield: {state} — {str(data.get('error'))[:300]}")
+
+            url = (data.get("video") or {}).get("url")
+            if not url:
+                raise VideoError("Higgsfield вернул готовый ответ без ссылки на видео")
+
+            clip = client.get(url, timeout=300)
+            clip.raise_for_status()
+    except ContentRejected:
+        raise
+    except httpx.HTTPError as e:
+        raise VideoError(f"Higgsfield: сеть — {e}") from e
+
+    out_path.write_bytes(clip.content)
+    return COSTS["higgsfield_video_per_clip"]
+
+
+def _higgsfield_submit(client, url: str, headers: dict, payload: dict) -> dict:
+    """Постановка задачи с повторами на перегрузке.
+
+    Раньше единственный отказ 429 ронял кадр целиком. Пауза растёт, чтобы
+    повтор не добавлял нагрузки тому, кто уже ей захлёбывается.
+    """
+    import time
+
+    last = ""
+    for attempt in range(1, HIGGSFIELD_ATTEMPTS + 1):
+        response = client.post(url, headers=headers, json=payload)
+        if response.status_code < 400:
+            return response.json()
+        last = f"HTTP {response.status_code}: {response.text[:300]}"
+        if response.status_code not in HIGGSFIELD_RETRY_CODES or attempt == HIGGSFIELD_ATTEMPTS:
+            raise VideoError(f"Higgsfield отказал — {last}")
+        time.sleep(2 ** attempt)
+    raise VideoError(f"Higgsfield отказал — {last}")
+
+
+def _higgsfield_cancel(client, headers: dict, started: dict) -> None:
+    """Снять задачу, которую мы перестали ждать.
+
+    Брошенный запрос продолжает считаться и тратить кредиты. Отмена не
+    обязана сработать — начатую генерацию остановить нельзя, — поэтому её
+    неудача не должна подменять собой исходную ошибку таймаута.
+    """
+    url = started.get("cancel_url")
+    if not url:
+        return
+    try:
+        client.post(url, headers=headers, timeout=20)
+        log.info("Higgsfield: задача %s снята по таймауту", started.get("request_id"))
+    except Exception as e:  # noqa: BLE001 — отмена не важнее причины отказа
+        log.warning("Higgsfield: снять задачу не удалось: %s", e)

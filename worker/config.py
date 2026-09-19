@@ -129,6 +129,23 @@ class Config:
     replicate_api_token: str = field(
         default_factory=lambda: os.environ.get("REPLICATE_API_TOKEN", "").strip()
     )
+    # Higgsfield — тот самый сервис, по которому равняется продукт. У него
+    # есть публичный REST API с генерацией видео из кадра, и схема полей
+    # известна точно из его openapi.json: гадать, как у соседей, не нужно.
+    # Ключ выдаётся парой; SDK читает их из HF_KEY или из HF_API_KEY и
+    # HF_API_SECRET — принимаем оба способа.
+    higgsfield_api_key: str = field(
+        default_factory=lambda: os.environ.get("HF_API_KEY", "").strip()
+    )
+    higgsfield_api_secret: str = field(
+        default_factory=lambda: os.environ.get("HF_API_SECRET", "").strip()
+    )
+    higgsfield_key: str = field(default_factory=lambda: os.environ.get("HF_KEY", "").strip())
+    higgsfield_video_model: str = field(
+        default_factory=lambda: os.environ.get(
+            "HIGGSFIELD_VIDEO_MODEL", "kling-video/v2.5-turbo/pro/image-to-video"
+        )
+    )
     replicate_video_model: str = field(
         default_factory=lambda: os.environ.get(
             "REPLICATE_VIDEO_MODEL", "wavespeedai/wan-2.1-i2v-480p"
@@ -178,9 +195,18 @@ class Config:
     @property
     def video_providers(self) -> list[str]:
         """Цепочка провайдеров видео в порядке приоритета."""
-        known = ("fal", "replicate")
+        known = ("higgsfield", "fal", "replicate")
         chain = [x.strip() for x in self.video_provider.split(",") if x.strip() in known]
         return chain or ["fal"]
+
+    @property
+    def higgsfield_credential(self) -> str:
+        """Ключ в виде `id:secret` — так его ждёт заголовок Authorization."""
+        if self.higgsfield_key:
+            return self.higgsfield_key
+        if self.higgsfield_api_key and self.higgsfield_api_secret:
+            return f"{self.higgsfield_api_key}:{self.higgsfield_api_secret}"
+        return ""
 
     @property
     def script_provider_chain(self) -> list[str]:
@@ -310,6 +336,10 @@ COSTS = {
     # Wan 2.1 480p на Replicate — $0.09 за секунду готового видео, проверено
     # на странице цен 17.09.2026. Пятисекундный клип обходится в $0.45.
     "replicate_video_per_clip": float(os.environ.get("COST_REPLICATE_VIDEO_CLIP", "0.45")),
+    # Higgsfield берёт кредитами, цена за клип в документации не объявлена.
+    # Ставим ориентир по той же модели у соседей — Kling 2.5 Turbo Pro, пять
+    # секунд. Уточняется переменной, когда появится счёт.
+    "higgsfield_video_per_clip": float(os.environ.get("COST_HIGGSFIELD_VIDEO_CLIP", "0.35")),
     # Запасная оценка, если OpenRouter не вернул реальную стоимость запроса.
     "openrouter_fallback_per_call": float(os.environ.get("COST_OPENROUTER_CALL", "0.002")),
 }
