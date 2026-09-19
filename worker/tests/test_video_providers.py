@@ -19,6 +19,15 @@ from steps import video_step  # noqa: E402
 
 @pytest.fixture
 def cfg(monkeypatch):
+    """Чистая конфигурация, не зависящая от .env разработчика.
+
+    Настоящие ключи с машины однажды уже подменили ожидания теста: HF_KEY из
+    .env перебил подставленную пару, и проверка сравнивала чужое значение.
+    Поэтому все ключи провайдеров сначала снимаются.
+    """
+    for key in ("HF_KEY", "HF_API_KEY", "HF_API_SECRET",
+                "REPLICATE_API_TOKEN", "VIDEO_PROVIDER", "HIGGSFIELD_VIDEO_MODEL"):
+        monkeypatch.delenv(key, raising=False)
     for key, value in {
         "MVP_SAFE_MODE": "0", "VIDEO_MODE": "provider", "SCRIPT_MODE": "mock",
         "ELEVENLABS_API_KEY": "t", "FAL_KEY": "t",
@@ -41,6 +50,7 @@ def test_chain_is_read_in_order(cfg, monkeypatch):
 def test_unknown_provider_is_ignored_not_crashed(cfg, monkeypatch):
     """Опечатка в настройке не должна ронять весь проект."""
     monkeypatch.setenv("VIDEO_PROVIDER", "runway,replicate")
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "t")
     assert cfg().video_providers == ["replicate"]
 
 

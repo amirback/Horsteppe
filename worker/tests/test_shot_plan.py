@@ -432,3 +432,42 @@ def test_plan_is_logged_in_the_agreed_format(caplog):
     assert "purpose=HOOK" in text
     assert "preferred_mode=REAL_VIDEO" in text
     assert "Planned REAL_VIDEO coverage target:" in text
+
+
+def test_hook_never_loses_the_queue_to_product_shots():
+    """Первые секунды решают, будут ли смотреть дальше.
+
+    В собранной рекламе «Вояж» приоритет товарных кадров вытеснил крючок,
+    и ролик начинался зумом по фотографии — ровно то, что бриф запрещает.
+    """
+    scenes = [
+        {"narration": "фраза " * 10, "audio_duration_sec": 5.0, "image_prompt": "кадр",
+         "shots": [{"framing": "wide", "action": "a"}, {"framing": "close", "action": "b"}]}
+        for _ in range(3)
+    ]
+    plans = shot_plan.plan_film_shots(scenes, mode="draft", requested_sec=15)
+    flat = [s for p in plans for s in p]
+    # Товарные кадры помечаем ссылкой на снимок — как делает конвейер.
+    for s in flat[1:]:
+        s["first_frame_reference"] = "https://example/photo.png"
+    shot_plan.assign_generation_modes(flat, "draft")
+    hook = next(s for s in flat if s["purpose"] == shot_plan.HOOK_PURPOSE)
+    assert shot_plan.preferred_mode(hook) == "real_video"
+
+
+def test_product_shots_still_outrank_ordinary_ones():
+    """Крючок вперёд — но товар по-прежнему важнее фона."""
+    scenes = [
+        {"narration": "фраза " * 10, "audio_duration_sec": 6.0, "image_prompt": "кадр",
+         "shots": [{"framing": "wide", "action": "a"}, {"framing": "close", "action": "b"}]}
+        for _ in range(3)
+    ]
+    flat = [s for p in shot_plan.plan_film_shots(scenes, requested_sec=18) for s in p]
+    product = flat[3]
+    product["first_frame_reference"] = "https://example/photo.png"
+    shot_plan.assign_generation_modes(flat, "draft")
+    plain = [s for s in flat if not s.get("first_frame_reference")
+             and s["purpose"] != shot_plan.HOOK_PURPOSE
+             and shot_plan.preferred_mode(s) == "image_motion"]
+    assert shot_plan.preferred_mode(product) == "real_video"
+    assert plain, "хоть один обычный кадр должен был уступить очередь"

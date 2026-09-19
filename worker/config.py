@@ -20,6 +20,15 @@ def _require(name: str) -> str:
     return value
 
 
+# Как называется переменная с ключом у каждого провайдера видео. Нужна,
+# чтобы отказ на старте называл человеку конкретное имя, а не «нет ключа».
+VIDEO_KEY_NAMES = {
+    "higgsfield": "HF_KEY",
+    "fal": "FAL_KEY",
+    "replicate": "REPLICATE_API_TOKEN",
+}
+
+
 @dataclass(frozen=True)
 class Config:
     supabase_url: str = field(default_factory=lambda: _require("SUPABASE_URL"))
@@ -199,6 +208,14 @@ class Config:
         chain = [x.strip() for x in self.video_provider.split(",") if x.strip() in known]
         return chain or ["fal"]
 
+    def has_video_key(self, provider: str) -> bool:
+        """Есть ли чем расплатиться с этим провайдером видео."""
+        if provider == "higgsfield":
+            return bool(self.higgsfield_credential)
+        if provider == "replicate":
+            return bool(self.replicate_api_token)
+        return bool(self.fal_key)
+
     @property
     def higgsfield_credential(self) -> str:
         """Ключ в виде `id:secret` — так его ждёт заголовок Authorization."""
@@ -294,10 +311,14 @@ class Config:
                 name
                 for name, value in (
                     ("ELEVENLABS_API_KEY", self.elevenlabs_api_key),
-                    # fal нужен, только если он есть в цепочке или делает видео
+                    # fal нужен, только если он рисует кадры. Раньше его ключ
+                    # требовался при любом VIDEO_MODE=provider — но видео с тех
+                    # пор делает любой из трёх провайдеров, и требовать ключ
+                    # именно fal стало неверно: запуск падал у того, кто платит
+                    # Higgsfield и про fal не слышал.
                     *(
                         (("FAL_KEY", self.fal_key),)
-                        if "fal" in self.image_providers or self.video_mode == "provider"
+                        if "fal" in self.image_providers
                         else ()
                     ),
                     *(
@@ -312,6 +333,20 @@ class Config:
                 raise RuntimeError(
                     f"{', '.join(missing)} требуются при MVP_SAFE_MODE=0. "
                     "Верните MVP_SAFE_MODE=1, чтобы работать на бесплатных заменителях."
+                )
+
+            # Настоящее видео требует ключа хотя бы у одного провайдера из
+            # цепочки. Без этой проверки сборщик стартовал бы бодро и упал
+            # на первом же клипе — после того, как за сценарий и озвучку
+            # уже заплачено.
+            if self.video_mode == "provider" and not any(
+                self.has_video_key(p) for p in self.video_providers
+            ):
+                names = " или ".join(VIDEO_KEY_NAMES[p] for p in self.video_providers)
+                raise RuntimeError(
+                    f"{names} требуется при VIDEO_MODE=provider "
+                    f"(цепочка: {', '.join(self.video_providers)}). "
+                    "Поставьте VIDEO_MODE=kenburns, чтобы обойтись движением по кадру."
                 )
         if self.music_file and not Path(self.music_file).exists():
             raise RuntimeError(f"MUSIC_FILE points to a missing file: {self.music_file}")

@@ -6,7 +6,10 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 import pipeline
 from config import Config
@@ -46,12 +49,53 @@ def process_job(cfg: Config, db: Db, job: dict) -> None:
             db.set_progress(project_id, "Повторная попытка…")
 
 
+LOCK_PATH = Path(os.environ.get("WORKER_LOCK_FILE", "/tmp/horsteppe-worker.lock"))
+
+
+@contextmanager
+def only_one_worker():
+    """Не дать запуститься второму сборщику на этой машине.
+
+    Дважды за одну сессию забытый старый процесс перехватывал задачу и делал
+    её по своим настройкам: он прочитал .env при запуске и о правках не знал.
+    В первый раз пропала финальная карточка, во второй — всё настоящее видео,
+    и заметить это можно было только по неправдоподобно быстрой сборке.
+
+    Замок снимается сам при выходе, а мёртвый замок от упавшего процесса не
+    блокирует новый запуск: проверяем, жив ли записанный в нём процесс.
+    """
+    if LOCK_PATH.exists():
+        try:
+            other = int(LOCK_PATH.read_text().strip())
+            os.kill(other, 0)  # сигнал 0 — только проверка существования
+        except (ValueError, ProcessLookupError):
+            log.info("замок остался от мёртвого процесса, забираю")
+        except PermissionError:
+            raise SystemExit(f"сборщик уже работает (процесс {other}). Закройте его окно.")
+        else:
+            raise SystemExit(
+                f"сборщик уже работает (процесс {other}). Закройте старое окно и запустите заново — "
+                "иначе задачу заберёт он, со своими прежними настройками."
+            )
+
+    LOCK_PATH.write_text(str(os.getpid()))
+    try:
+        yield
+    finally:
+        try:
+            if LOCK_PATH.exists() and LOCK_PATH.read_text().strip() == str(os.getpid()):
+                LOCK_PATH.unlink()
+        except OSError:
+            pass
+
+
 def main() -> None:
     cfg = Config()
     db = Db(cfg)
     log.info(
-        "worker %s started (script_mode=%s, video_mode=%s, model=%s)",
-        cfg.worker_id, cfg.effective_script_mode, cfg.effective_video_mode, cfg.active_llm_model,
+        "worker %s started (script_mode=%s, video_mode=%s, video_providers=%s, model=%s)",
+        cfg.worker_id, cfg.effective_script_mode, cfg.effective_video_mode,
+        ",".join(cfg.video_providers), cfg.active_llm_model,
     )
 
     started = time.monotonic()
@@ -84,4 +128,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    with only_one_worker():
+        main()
