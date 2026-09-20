@@ -63,6 +63,10 @@ def render_final(
     aspect: str = media.DEFAULT_FORMAT,
     transition_sec: float = 0.0,
     subtitles: bool = True,
+    # Финальная карточка: {"title": ..., "subtitle": ..., "duration": ...}.
+    # Название бренда — единственное место, где ошибка в букве недопустима,
+    # поэтому оно набирается шрифтом, а не рисуется генератором кадров.
+    end_card: dict | None = None,
 ) -> Path:
     """Build the final video.
 
@@ -124,10 +128,13 @@ def render_final(
     media.concat_audio([Path(s["audio_path"]) for s in scenes], voice)
 
     # 3. склейка картинки
-    # Профиль сжатия достаётся последнему видеопроходу сборки. Когда субтитры
-    # включены, последний проход — вшивание; без них склейка и есть финал.
+    # Профиль сжатия достаётся ПОСЛЕДНЕМУ видеопроходу сборки, и только ему:
+    # финальный профиль сжимает сильнее, и два таких прохода подряд теряют
+    # заметно больше, чем один. Проходов может быть три — склейка, вшивание
+    # субтитров, финальная карточка, — и последний из них зависит от заказа.
+    has_end_card = bool(end_card and (end_card.get("title") or "").strip())
     picture = work_dir / "picture.mp4"
-    last_video_pass = not subtitles
+    last_video_pass = not subtitles and not has_end_card
     if transition > 0:
         media.concat_with_transitions(
             segments, picture, durations, transition, final=last_video_pass
@@ -151,7 +158,7 @@ def render_final(
         ass.write_text(media.build_ass(timed, size, family), encoding="utf-8")
         if srt.stat().st_size > 0:
             burned = work_dir / "subtitled.mp4"
-            media.burn_subtitles(current, ass, burned)
+            media.burn_subtitles(current, ass, burned, final=not has_end_card)
             current = burned
 
     # 6. музыка
@@ -159,5 +166,18 @@ def render_final(
         final = work_dir / "final.mp4"
         media.mix_music(current, Path(music_file), final)
         current = final
+
+    # 7. финальная карточка — после сведения звука: она несёт свою тишину
+    #    и не должна попасть под обрезку по длине голоса. Это последний
+    #    видеопроход, и финальный профиль сжатия принадлежит ему.
+    if has_end_card:
+        card = work_dir / "end_card.mp4"
+        media.make_end_card(
+            card, float(end_card.get("duration") or 2.0), size,
+            end_card["title"], end_card.get("subtitle") or "",
+        )
+        with_card = work_dir / "with_end_card.mp4"
+        media.append_end_card(current, card, with_card)
+        current = with_card
 
     return current

@@ -19,6 +19,7 @@ import media
 import product_brief
 import providers
 import quality
+import quality_debug
 import references as references_mod
 import safe_mode
 from config import COSTS, TMP_DIR, Config
@@ -189,20 +190,20 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
                 db.update_shot(shot["id"], failure_reason=reason[:500])
                 continue
             try:
-                cost = video_step.generate_clip(
+                done = video_step.generate_clip(
                     cfg, reference["public_url"], motion, clip_path,
-                    model=choice.model, cost_usd=choice.cost_usd,
+                    provider=choice.provider, model=choice.model, cost_usd=choice.cost_usd,
                 )
             except (video_step.VideoError, budget.BudgetExceeded) as e:
                 log.warning("[%s] клип %d не получился: %s", project_id[:8], i, e)
                 db.update_shot(shot["id"], failure_reason=str(e)[:500])
                 continue
             url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
-            db.log_cost(project_id, "video", choice.provider, cost, f"shot {i}")
-            guard.record(cost, f"клип {i}")
+            db.log_cost(project_id, "video", done.provider, done.cost_usd, f"shot {i}")
+            guard.record(done.cost_usd, f"клип {i}")
             db.update_shot(shot["id"], video_url=url, status="video_done",
-                           generation_mode="real_video", actual_cost_usd=cost,
-                           provider=choice.provider, model=choice.model)
+                           generation_mode="real_video", actual_cost_usd=done.cost_usd,
+                           provider=done.provider, model=done.model)
             shot.update(video_url=url, generation_mode="real_video")
     else:
         log.info("[%s] платное видео закрыто: фотография получит движение камеры", project_id[:8])
@@ -248,7 +249,10 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
 READY_MARK = "_ready"
 
 
-def _prepare_references(db: Db, project_id: str, rows: list[dict], work_dir: Path) -> list[dict]:
+def _prepare_references(
+    db: Db, project_id: str, rows: list[dict], work_dir: Path,
+    aspect: tuple[int, int] | None = None,
+) -> list[dict]:
     """Привести снимки пользователя к рабочему виду — один раз за проект.
 
     Поворот по EXIF здесь не формальность: телефон пишет ориентацию в
@@ -266,9 +270,17 @@ def _prepare_references(db: Db, project_id: str, rows: list[dict], work_dir: Pat
             continue
         try:
             source = _download(row["public_url"], work_dir / f"ref_src_{order:02d}")
+            mime = row.get("mime_type") or "image/jpeg"
             info = references_mod.normalize(
-                source, work_dir, f"ref_{order:02d}{READY_MARK}", row.get("mime_type") or "image/jpeg"
+                source, work_dir, f"ref_{order:02d}{READY_MARK}", mime
             )
+            if aspect:
+                # Формат кадра задаётся здесь, а не в монтаже: модель
+                # «кадр → видео» повторяет пропорции поданной картинки, и
+                # квадратный снимок давал квадратный клип, у которого потом
+                # выбрасывалось 44% ширины.
+                fitted = work_dir / f"ref_{order:02d}{READY_MARK}_fit{info['path'].suffix}"
+                info = {**info, **references_mod.fit_aspect(info["path"], fitted, aspect, mime)}
         except Exception as e:  # noqa: BLE001 — исходник лучше отказа
             log.warning("[%s] снимок %d не удалось подготовить: %s", project_id[:8], order, e)
             prepared.append(row)
@@ -446,7 +458,10 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
     try:
         if references:
             db.set_progress(project_id, "Готовим фотографии…")
-            references = _prepare_references(db, project_id, references, work_dir)
+            references = _prepare_references(
+                db, project_id, references, work_dir,
+                aspect=media.frame_size(project.get("aspect_ratio") or cfg.video_format),
+            )
         reference_urls = [r["public_url"] for r in references]
 
         if project_type == "image_to_video":
@@ -622,10 +637,10 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     db.update_shot(shot["id"], failure_reason=reason[:500])
                     continue
                 try:
-                    cost = video_step.generate_clip(
+                    done = video_step.generate_clip(
                         cfg, shot["image_url"],
                         shot.get("video_prompt") or shot["visual_prompt"], clip_path,
-                        model=choice.model, cost_usd=choice.cost_usd,
+                        provider=choice.provider, model=choice.model, cost_usd=choice.cost_usd,
                     )
                 except (video_step.VideoError, budget.BudgetExceeded) as e:
                     # Падение провайдера и конец денег кончаются одинаково:
@@ -636,14 +651,25 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     db.update_shot(shot["id"], failure_reason=str(e)[:500])
                     continue
                 url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
-                db.log_cost(project_id, "video", choice.provider, cost, f"shot {i}")
-                guard.record(cost, f"видео кадра {i}")
+                # Записываем того, кто ДЕЙСТВИТЕЛЬНО сделал клип, а не того,
+                # кого предложил маршрутизатор. Маршрутизатор знает только
+                # модели fal, а цепочка отдаёт кадр первому доступному
+                # провайдеру — и в базе оставалась ложь про «fal v2.1 pro»
+                # там, где работал Higgsfield моделью v2.5-turbo.
+                if done.provider != choice.provider or done.model != choice.model:
+                    log.info(
+                        "[%s] кадр %d: маршрутизатор предлагал %s/%s, клип сделал %s/%s",
+                        project_id[:8], i, choice.provider, choice.model,
+                        done.provider, done.model,
+                    )
+                db.log_cost(project_id, "video", done.provider, done.cost_usd, f"shot {i}")
+                guard.record(done.cost_usd, f"видео кадра {i}")
                 # Только здесь кадр становится настоящим видео: движение по
                 # картинке засчитывать в real_video нельзя.
                 db.update_shot(
                     shot["id"], video_url=url, status="video_done",
-                    generation_mode="real_video", actual_cost_usd=cost,
-                    provider=choice.provider, model=choice.model,
+                    generation_mode="real_video", actual_cost_usd=done.cost_usd,
+                    provider=done.provider, model=done.model,
                 )
                 shot.update(video_url=url, generation_mode="real_video")
 
@@ -673,6 +699,9 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 end_card=_end_card_for(project),
             )
             db.set_progress(project_id, "Проверка результата…")
+            # Замер готового ролика рядом с сырыми клипами провайдера. Только
+            # в режиме разбора качества: в обычной работе не делает ничего.
+            quality_debug.record_final(final_path)
             report = quality.inspect(
                 final_path, size, shots,
                 requested_sec=float(project.get("duration_sec") or 0) or None,

@@ -317,3 +317,48 @@ def test_timeout_cancels_the_abandoned_request(cfg, hf, monkeypatch, tmp_path):
     with pytest.raises(video_step.VideoError, match="не отдал клип"):
         video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4")
     assert any("cancel" in url for url, _, _ in http.seen_posts), http.seen_posts
+
+
+# --- честность метаданных ---------------------------------------------------
+
+def test_result_names_the_provider_that_actually_worked(cfg, hf, monkeypatch, tmp_path):
+    """В базе оставалась ложь: «fal, kling v2.1 pro» там, где работал Higgsfield.
+
+    Маршрутизатор знает только модели fal, а цепочка отдаёт кадр первому
+    доступному провайдеру. По этим метаданным считают деньги и выбирают
+    модель, поэтому они обязаны говорить правду о том, что произошло.
+    """
+    monkeypatch.setenv("VIDEO_PROVIDER", "higgsfield,fal")
+    started = {"request_id": "r1", "status": "completed",
+               "status_url": "https://api/s", "cancel_url": "https://api/c",
+               "video": {"url": "https://api/clip.mp4"}}
+    http = FakeHttp(posts=[FakeResponse(started)], gets=[FakeResponse(content=b"clip")])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+
+    # Маршрутизатор предлагает модель fal — её не должно оказаться в ответе.
+    out = tmp_path / "c.mp4"
+    done = video_step.generate_clip(
+        cfg(), "https://img/p.png", "push in", out,
+        model="fal-ai/kling-video/v2.1/pro/image-to-video", cost_usd=0.35,
+    )
+    assert done.provider == "higgsfield"
+    assert done.model == "kling-video/v2.5-turbo/pro/image-to-video"
+    assert "fal" not in done.model
+
+
+def test_fal_result_reports_the_routed_model(cfg, monkeypatch, tmp_path):
+    """Когда работает fal, в ответе должна стоять именно выбранная им модель."""
+    monkeypatch.setenv("VIDEO_PROVIDER", "fal")
+
+    def fake_fal(cfg_, image_url, prompt, out_path, model, price):
+        out_path.write_bytes(b"clip")
+        return video_step.ClipResult("fal", model, price)
+
+    monkeypatch.setattr(video_step, "_via_fal", fake_fal)
+    done = video_step.generate_clip(
+        cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4",
+        model="fal-ai/kling-video/v2.1/standard/image-to-video", cost_usd=0.35,
+    )
+    assert done.provider == "fal"
+    assert done.model.endswith("v2.1/standard/image-to-video")
+    assert done.cost_usd == 0.35

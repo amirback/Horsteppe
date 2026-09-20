@@ -101,13 +101,13 @@ class TestFrozenClipIsCaughtAndReplaced(unittest.TestCase):
         os.environ.update(env)
         from config import Config
 
-        def frozen_clip(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
+        def frozen_clip(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None, provider=None):
             """Пять секунд одного и того же кадра — брак, который платят."""
             media.run_ffmpeg([
                 "-f", "lavfi", "-i", f"color=c=slategray:size={SIZE[0]}x{SIZE[1]}:rate=30",
                 "-t", "5", "-pix_fmt", "yuv420p", str(out_path),
             ])
-            return 0.35
+            return video_step.ClipResult("higgsfield", "kling-video/v2.5-turbo/pro/image-to-video", 0.35)
 
         def textured_image(cfg, prompt, out_path, index=0):
             """Картинка с фактурой: по ней движение камеры видно."""
