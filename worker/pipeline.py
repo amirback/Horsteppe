@@ -19,6 +19,7 @@ import media
 import product_brief
 import providers
 import quality
+import quality_debug
 import references as references_mod
 import safe_mode
 from config import COSTS, TMP_DIR, Config
@@ -698,6 +699,9 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 end_card=_end_card_for(project),
             )
             db.set_progress(project_id, "Проверка результата…")
+            # Замер готового ролика рядом с сырыми клипами провайдера. Только
+            # в режиме разбора качества: в обычной работе не делает ничего.
+            quality_debug.record_final(final_path)
             report = quality.inspect(
                 final_path, size, shots,
                 requested_sec=float(project.get("duration_sec") or 0) or None,
