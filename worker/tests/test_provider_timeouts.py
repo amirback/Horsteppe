@@ -103,6 +103,11 @@ class ImageStepTimeoutTest(unittest.TestCase):
     def test_hang_becomes_image_error(self) -> None:
         from steps import image_step
 
+        # Файл от прошлого прогона делал проверку бессмысленной: она
+        # утверждает «файла быть не должно», а он уже лежал с прошлого раза.
+        target = WORKER_DIR / "tests" / "_never_written.png"
+        target.unlink(missing_ok=True)
+
         with _install_fake_fal(_hang), mock.patch.object(image_step, "TIMEOUT_SEC", SHORT_TIMEOUT):
             started = time.monotonic()
             with self.assertRaises(image_step.ImageError) as ctx:

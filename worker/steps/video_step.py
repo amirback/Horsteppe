@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -40,10 +41,27 @@ class VideoError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class ClipResult:
+    """Кто на самом деле сделал клип и во что он обошёлся.
+
+    Раньше шаг возвращал одну цифру — стоимость, — и конвейер записывал в
+    кадр то, что предложил маршрутизатор. Но маршрутизатор знает только
+    модели fal, а цепочка отдаёт кадр первому доступному провайдеру. В базе
+    оставалась ложь: «fal, kling v2.1 pro», хотя клип сделал Higgsfield
+    моделью v2.5-turbo. Метаданные, по которым считают деньги и выбирают
+    модель, обязаны говорить правду о том, что произошло.
+    """
+
+    provider: str
+    model: str
+    cost_usd: float
+
+
 def generate_clip(
     cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path,
     model: str | None = None, cost_usd: float | None = None,
-) -> float:
+) -> ClipResult:
     """Animate an image into a ~5s clip. `image_public_url` must be publicly
     reachable (we pass the Supabase Storage public URL). Returns cost in USD.
 
@@ -82,7 +100,7 @@ def generate_clip(
 def _via_fal(
     cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path,
     model: str | None, price: float,
-) -> float:
+) -> ClipResult:
     os.environ.setdefault("FAL_KEY", cfg.fal_key)
     import fal_client
 
@@ -114,7 +132,7 @@ def _via_fal(
         resp = client.get(url)
         resp.raise_for_status()
     out_path.write_bytes(resp.content)
-    return price
+    return ClipResult("fal", model or cfg.fal_video_model, price)
 
 
 # --------------------------------------------------------------- replicate --
@@ -126,7 +144,7 @@ REPLICATE_POLL_SEC = float(os.environ.get("REPLICATE_POLL_SEC", "5"))
 REPLICATE_TIMEOUT_SEC = float(os.environ.get("REPLICATE_TIMEOUT_SEC", "900"))
 
 
-def _via_replicate(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> float:
+def _via_replicate(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> ClipResult:
     """Клип через Replicate.
 
     Почему он здесь вообще. У fal минимальный платёж $10, и это оказалось
@@ -193,7 +211,7 @@ def _via_replicate(cfg: Config, image_public_url: str, motion_prompt: str, out_p
         raise VideoError(f"Replicate: сеть — {e}") from e
 
     out_path.write_bytes(clip.content)
-    return COSTS["replicate_video_per_clip"]
+    return ClipResult("replicate", cfg.replicate_video_model, COSTS["replicate_video_per_clip"])
 
 
 def _replicate_output_url(output) -> str | None:
@@ -261,7 +279,7 @@ def _higgsfield_headers(cfg: Config) -> dict:
     }
 
 
-def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> float:
+def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> ClipResult:
     """Клип через собственный API Higgsfield.
 
     Схема запроса взята из их openapi.json, а не угадана: обязательны
@@ -317,7 +335,7 @@ def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_
         raise VideoError(f"Higgsfield: сеть — {e}") from e
 
     out_path.write_bytes(clip.content)
-    return COSTS["higgsfield_video_per_clip"]
+    return ClipResult("higgsfield", model, COSTS["higgsfield_video_per_clip"])
 
 
 def _higgsfield_submit(client, url: str, headers: dict, payload: dict) -> dict:

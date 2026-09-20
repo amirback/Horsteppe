@@ -172,7 +172,10 @@ class TestPipelineRespectsTheCeiling(unittest.TestCase):
                 "-i", f"testsrc2=size={cls.size[0]}x{cls.size[1]}:rate=30:duration=5",
                 "-pix_fmt", "yuv420p", str(out_path),
             ])
-            return COSTS["fal_video_per_clip"]
+            return video_step.ClipResult(
+                "higgsfield", "kling-video/v2.5-turbo/pro/image-to-video",
+                COSTS["fal_video_per_clip"],
+            )
 
         def fake_image(cfg, prompt, out_path, index=0):
             media.run_ffmpeg(["-f", "lavfi", "-i", f"color=c=gray:size={cls.size[0]}x{cls.size[1]}",

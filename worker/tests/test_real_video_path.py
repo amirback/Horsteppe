@@ -79,7 +79,7 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
             """Стоит как настоящий вызов, но ничего не платит."""
             cls.calls.append(image_url)
             out_path.write_bytes(cls.clip.read_bytes())
-            return 0.35
+            return video_step.ClipResult("higgsfield", "kling-video/v2.5-turbo/pro/image-to-video", 0.35)
 
         def fake_image(cfg, prompt, out_path, index=0):
             media.run_ffmpeg([
