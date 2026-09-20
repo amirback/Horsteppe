@@ -25,6 +25,7 @@ from pathlib import Path
 
 import httpx
 
+import quality_debug
 import safe_mode
 from config import COSTS, Config
 
@@ -104,15 +105,16 @@ def _via_fal(
     os.environ.setdefault("FAL_KEY", cfg.fal_key)
     import fal_client
 
+    arguments = {
+        "image_url": image_public_url,
+        "prompt": motion_prompt,
+        "duration": "5",
+    }
     try:
         result = call_with_timeout(
             fal_client.subscribe,
             model or cfg.fal_video_model,
-            arguments={
-                "image_url": image_public_url,
-                "prompt": motion_prompt,
-                "duration": "5",
-            },
+            arguments=arguments,
             timeout=TIMEOUT_SEC,
             label="fal.video",
         )
@@ -132,7 +134,9 @@ def _via_fal(
         resp = client.get(url)
         resp.raise_for_status()
     out_path.write_bytes(resp.content)
-    return ClipResult("fal", model or cfg.fal_video_model, price)
+    chosen = model or cfg.fal_video_model
+    quality_debug.record_clip(out_path.stem, "fal", chosen, arguments, out_path)
+    return ClipResult("fal", chosen, price)
 
 
 # --------------------------------------------------------------- replicate --
@@ -211,6 +215,7 @@ def _via_replicate(cfg: Config, image_public_url: str, motion_prompt: str, out_p
         raise VideoError(f"Replicate: сеть — {e}") from e
 
     out_path.write_bytes(clip.content)
+    quality_debug.record_clip(out_path.stem, "replicate", cfg.replicate_video_model, payload, out_path)
     return ClipResult("replicate", cfg.replicate_video_model, COSTS["replicate_video_per_clip"])
 
 
@@ -335,6 +340,7 @@ def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_
         raise VideoError(f"Higgsfield: сеть — {e}") from e
 
     out_path.write_bytes(clip.content)
+    quality_debug.record_clip(out_path.stem, "higgsfield", model, payload, out_path)
     return ClipResult("higgsfield", model, COSTS["higgsfield_video_per_clip"])
 
 
