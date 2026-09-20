@@ -63,6 +63,10 @@ def render_final(
     aspect: str = media.DEFAULT_FORMAT,
     transition_sec: float = 0.0,
     subtitles: bool = True,
+    # Финальная карточка: {"title": ..., "subtitle": ..., "duration": ...}.
+    # Название бренда — единственное место, где ошибка в букве недопустима,
+    # поэтому оно набирается шрифтом, а не рисуется генератором кадров.
+    end_card: dict | None = None,
 ) -> Path:
     """Build the final video.
 
@@ -159,5 +163,17 @@ def render_final(
         final = work_dir / "final.mp4"
         media.mix_music(current, Path(music_file), final)
         current = final
+
+    # 7. финальная карточка — после сведения звука: она несёт свою тишину
+    #    и не должна попасть под обрезку по длине голоса.
+    if end_card and (end_card.get("title") or "").strip():
+        card = work_dir / "end_card.mp4"
+        media.make_end_card(
+            card, float(end_card.get("duration") or 2.0), size,
+            end_card["title"], end_card.get("subtitle") or "",
+        )
+        with_card = work_dir / "with_end_card.mp4"
+        media.append_end_card(current, card, with_card)
+        current = with_card
 
     return current

@@ -553,6 +553,97 @@ def resolve_font() -> tuple[Path | None, str | None]:
     return None, None
 
 
+def font_file() -> Path | None:
+    """Файл шрифта для надписей, вшиваемых в кадр.
+
+    `resolve_font` отдаёт каталог и семейство — так устроен libass. Для
+    `drawtext` нужен именно файл, поэтому путь собирается заново.
+    """
+    override = os.environ.get("SUBTITLE_FONT_FILE", "").strip()
+    if override and Path(override).exists():
+        return Path(override)
+    preferred = ["DejaVuSans.ttf", "NotoSans-Regular.ttf", "Arial Unicode.ttf", "Arial.ttf"]
+    for directory in _FONT_CANDIDATES:
+        if not directory.is_dir():
+            continue
+        for name in preferred:
+            candidate = directory / name
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _escape_drawtext(text: str) -> str:
+    """Экранирование для drawtext: двоеточие и апостроф ломают разбор фильтра."""
+    return (
+        text.replace("\\", r"\\\\")
+        .replace(":", r"\:")
+        .replace("'", r"\'")
+        .replace("%", r"\%")
+    )
+
+
+def make_end_card(
+    out: Path, duration: float, size: tuple[int, int],
+    title: str, subtitle: str = "", background: str = "black",
+) -> None:
+    """Финальная карточка: название и слоган, набранные шрифтом.
+
+    Почему не поручить это генератору кадров. Диффузионные модели не умеют
+    писать текст: вместо «BOIAGE» выходит набор похожих на буквы закорючек.
+    Название бренда — единственное место ролика, где ошибка недопустима,
+    поэтому оно рисуется шрифтом поверх ровного фона.
+    """
+    w, h = size
+    font = font_file()
+    if font is None:
+        raise RuntimeError("не найден шрифт для финальной карточки")
+
+    # Кегль от ширины кадра, а не абсолютный: карточка одинаково смотрится
+    # и в вертикальном, и в горизонтальном формате.
+    title_size = max(int(w * 0.11), 24)
+    subtitle_size = max(int(w * 0.045), 14)
+
+    parts = [
+        f"drawtext=fontfile='{font}':text='{_escape_drawtext(title)}'"
+        f":fontcolor=white:fontsize={title_size}:x=(w-tw)/2:y=(h-th)/2-{int(h * 0.03)}"
+    ]
+    if subtitle.strip():
+        parts.append(
+            f"drawtext=fontfile='{font}':text='{_escape_drawtext(subtitle)}'"
+            f":fontcolor=white@0.75:fontsize={subtitle_size}"
+            f":x=(w-tw)/2:y=(h-th)/2+{int(h * 0.06)}"
+        )
+
+    # Дорожка тишины обязательна: карточка приклеивается к ролику со звуком,
+    # а склейка потоков разной формы теряет аудио целиком.
+    run_ffmpeg([
+        "-f", "lavfi", "-i", f"color=c={background}:s={w}x{h}:r={FPS}",
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-vf", ",".join([*parts, "format=yuv420p"]),
+        "-t", f"{duration:.3f}", *_ENCODE, "-c:a", "aac", "-b:a", "128k",
+        "-shortest", str(out),
+    ])
+
+
+def append_end_card(video: Path, card: Path, out: Path) -> None:
+    """Приклеить карточку в конец готового ролика.
+
+    Склейка идёт фильтром, а не демуксером: у карточки и у ролика разные
+    истории кодирования, и копирование потоков встык уже однажды молча
+    обрывало картинку на первом же стыке.
+    """
+    run_ffmpeg([
+        "-i", str(video), "-i", str(card),
+        "-filter_complex",
+        "[0:v]setsar=1[v0];[1:v]setsar=1[v1];"
+        "[v0][0:a][v1][1:a]concat=n=2:v=1:a=1[v][a]",
+        "-map", "[v]", "-map", "[a]",
+        *_ENCODE, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+        str(out),
+    ])
+
+
 def burn_subtitles(video: Path, ass: Path, out: Path, final: bool = True) -> None:
     """Burn the ASS subtitles into the picture.
 

@@ -89,6 +89,21 @@ SCENES_SCHEMA = {
 # поведение обычных роликов ради рекламы.
 def _ad_schema() -> dict:
     schema = copy.deepcopy(SCENES_SCHEMA)
+    # Описание поля в схеме сильнее любой просьбы в тексте задания. Общая
+    # схема требует назвать «возраст, пол, волосы и одежду персонажа» — и
+    # модель послушно выдумывала девушку даже там, где её прямым текстом
+    # просили не выдумывать. Для рекламы постоянство — это товар, а не актёр.
+    schema["properties"]["continuity"] = {
+        "type": "string",
+        "description": (
+            "ENGLISH. What must never change between shots: the product's shape, "
+            "colour, packaging and material; the location; the colour palette; "
+            "the lighting. Describe the product and the world, NOT a person. "
+            "Do not name a character, an age, a gender, hair or clothing — this "
+            "text is pasted into every frame, and a recurring invented face is "
+            "what makes an advertisement look like stock footage."
+        ),
+    }
     scene = schema["properties"]["scenes"]["items"]
     scene["properties"]["purpose"] = {
         "type": "string",
