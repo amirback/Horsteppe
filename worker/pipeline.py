@@ -248,7 +248,10 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
 READY_MARK = "_ready"
 
 
-def _prepare_references(db: Db, project_id: str, rows: list[dict], work_dir: Path) -> list[dict]:
+def _prepare_references(
+    db: Db, project_id: str, rows: list[dict], work_dir: Path,
+    aspect: tuple[int, int] | None = None,
+) -> list[dict]:
     """Привести снимки пользователя к рабочему виду — один раз за проект.
 
     Поворот по EXIF здесь не формальность: телефон пишет ориентацию в
@@ -266,9 +269,17 @@ def _prepare_references(db: Db, project_id: str, rows: list[dict], work_dir: Pat
             continue
         try:
             source = _download(row["public_url"], work_dir / f"ref_src_{order:02d}")
+            mime = row.get("mime_type") or "image/jpeg"
             info = references_mod.normalize(
-                source, work_dir, f"ref_{order:02d}{READY_MARK}", row.get("mime_type") or "image/jpeg"
+                source, work_dir, f"ref_{order:02d}{READY_MARK}", mime
             )
+            if aspect:
+                # Формат кадра задаётся здесь, а не в монтаже: модель
+                # «кадр → видео» повторяет пропорции поданной картинки, и
+                # квадратный снимок давал квадратный клип, у которого потом
+                # выбрасывалось 44% ширины.
+                fitted = work_dir / f"ref_{order:02d}{READY_MARK}_fit{info['path'].suffix}"
+                info = {**info, **references_mod.fit_aspect(info["path"], fitted, aspect, mime)}
         except Exception as e:  # noqa: BLE001 — исходник лучше отказа
             log.warning("[%s] снимок %d не удалось подготовить: %s", project_id[:8], order, e)
             prepared.append(row)
@@ -446,7 +457,10 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
     try:
         if references:
             db.set_progress(project_id, "Готовим фотографии…")
-            references = _prepare_references(db, project_id, references, work_dir)
+            references = _prepare_references(
+                db, project_id, references, work_dir,
+                aspect=media.frame_size(project.get("aspect_ratio") or cfg.video_format),
+            )
         reference_urls = [r["public_url"] for r in references]
 
         if project_type == "image_to_video":

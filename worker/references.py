@@ -195,3 +195,47 @@ def normalize(src: Path, dest_dir: Path, name: str, mime_type: str) -> dict:
         "recompressed": mime_type in LOSSY_MIME,
         "note": quality_note(new_width, new_height),
     }
+
+
+def fit_aspect(src: Path, dest: Path, aspect: tuple[int, int], mime_type: str) -> dict:
+    """Обрезать снимок под формат кадра проекта — до генерации видео.
+
+    Зачем это здесь, а не в монтаже. Модель «кадр → видео» берёт пропорции у
+    поданной картинки: у Kling нет поля формата, он просто повторяет вход.
+    Квадратное фото товара давало квадратный клип 1440×1436, а монтаж потом
+    приводил его к 1080×1920 увеличением в 1.337 раза и обрезкой.
+
+    Замер на готовой рекламе: **44% ширины кадра выбрасывалось**, а
+    оставшиеся 56% растягивались. То есть платили за пиксели, которые никто
+    не увидит, и портили те, что оставались.
+
+    Обрезка по центру, без дорисовки полей: поля в рекламе смотрятся дёшево,
+    а товар на снимке обычно в середине. Картинка не увеличивается — если
+    она меньше кадра, лучше отдать модели честный маленький снимок, чем
+    растянутый.
+    """
+    width, height = media.image_size(src)
+    target = aspect[0] / aspect[1]
+    current = width / height
+    if abs(current - target) < 0.01:
+        dest.write_bytes(src.read_bytes())
+        return {"path": dest, "width": width, "height": height, "cropped": False}
+
+    if current > target:
+        new_w, new_h = int(round(height * target)), height
+    else:
+        new_w, new_h = width, int(round(width / target))
+    new_w -= new_w % 2
+    new_h -= new_h % 2
+
+    args = ["-i", str(src), "-vf", f"crop={new_w}:{new_h}", "-frames:v", "1"]
+    if mime_type in LOSSY_MIME:
+        args += ["-q:v", "2"]
+    media.run_ffmpeg([*args, str(dest)])
+
+    kept = (new_w * new_h) / (width * height)
+    log.info(
+        "[REFERENCE] обрезка под формат: %d×%d → %d×%d, сохранено %.0f%% площади",
+        width, height, new_w, new_h, kept * 100,
+    )
+    return {"path": dest, "width": new_w, "height": new_h, "cropped": True}
