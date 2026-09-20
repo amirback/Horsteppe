@@ -59,16 +59,34 @@ class ClipResult:
     cost_usd: float
 
 
+def _chain_for(cfg: Config, provider: str | None) -> list[str]:
+    """Порядок обхода провайдеров с учётом выбора маршрутизатора.
+
+    Выбранный идёт первым, остальные остаются запасом в прежнем порядке.
+    Раньше выбор маршрутизатора на порядок не влиял вовсе: кадр всегда
+    доставался первому в настройке, а имя выбранной модели просто терялось.
+
+    Провайдер, которого нет в настройке, игнорируется молча — настройка
+    остаётся главнее подсказки.
+    """
+    chain = list(cfg.video_providers)
+    if provider and provider in chain:
+        chain.remove(provider)
+        chain.insert(0, provider)
+    return chain
+
+
 def generate_clip(
     cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path,
     model: str | None = None, cost_usd: float | None = None,
+    provider: str | None = None,
 ) -> ClipResult:
     """Animate an image into a ~5s clip. `image_public_url` must be publicly
     reachable (we pass the Supabase Storage public URL). Returns cost in USD.
 
-    `model` и `cost_usd` приходят от маршрутизатора: на важный кадр он берёт
-    модель посильнее, на фоновый — подешевле. Без них шаг работает как раньше,
-    по настройке из окружения.
+    `provider`, `model` и `cost_usd` приходят от маршрутизатора: на важный
+    кадр он берёт модель посильнее, на фоновый — подешевле. Без них шаг
+    работает как раньше, по настройке из окружения.
     """
     # Защита в глубину: конвейер и так не зовёт этот шаг в безопасном режиме.
     # Оценка передаётся до вызова — потолок проекта обязан успеть отказать,
@@ -76,24 +94,33 @@ def generate_clip(
     price = COSTS["fal_video_per_clip"] if cost_usd is None else float(cost_usd)
     safe_mode.require_paid(cfg, "генерация видео", price)
 
-    chain = cfg.video_providers
+    chain = _chain_for(cfg, provider)
+    # Имя модели осмысленно только для того провайдера, который её и
+    # предложил. Отдавать `kling-video/v2.5-turbo` в fal или наоборот — верный
+    # способ получить отказ за деньги, поэтому запасным провайдерам модель
+    # не передаётся: они берут свою из настройки.
+    # Кому адресована подсказка о модели. Маршрутизатор называет провайдера
+    # явно; у старых вызовов его нет, и там `model` всегда означал модель
+    # fal — это значение сохраняется, чтобы не сломать их молча.
+    addressed_to = provider or "fal"
     errors: list[str] = []
-    for position, provider in enumerate(chain, start=1):
+    for position, current in enumerate(chain, start=1):
+        hint = model if current == addressed_to else None
         try:
-            if provider == "higgsfield":
-                return _via_higgsfield(cfg, image_public_url, motion_prompt, out_path)
-            if provider == "replicate":
+            if current == "higgsfield":
+                return _via_higgsfield(cfg, image_public_url, motion_prompt, out_path, hint)
+            if current == "replicate":
                 return _via_replicate(cfg, image_public_url, motion_prompt, out_path)
-            return _via_fal(cfg, image_public_url, motion_prompt, out_path, model, price)
+            return _via_fal(cfg, image_public_url, motion_prompt, out_path, hint, price)
         except ContentRejected:
             # Отклонение по содержанию — приговор для всей цепочки. Что
             # отвергла одна модель, отвергнет и соседняя, а вызов к ней
             # будет стоить денег.
             raise
         except VideoError as e:
-            errors.append(f"{provider}: {e}")
+            errors.append(f"{current}: {e}")
             if position < len(chain):
-                log.warning("%s не сделал клип, пробую следующего: %s", provider, e)
+                log.warning("%s не сделал клип, пробую следующего: %s", current, e)
             continue
     raise VideoError("Клип не удалось получить ни у одного провайдера. " + " | ".join(errors))
 
@@ -245,6 +272,28 @@ HIGGSFIELD_ATTEMPTS = 3
 # пять берём потому, что монтаж всё равно режет клип под длину кадра.
 HIGGSFIELD_DURATION = int(os.environ.get("HIGGSFIELD_DURATION_SEC", "5"))
 
+# Насколько строго модель держится промпта: 0…1, у них по умолчанию 0.5.
+# Значение не меняем без замера — их документированное умолчание это
+# компромисс между послушанием и естественностью движения, и «покрутить
+# вверх» наугад скорее сделает картинку деревянной.
+HIGGSFIELD_CFG_SCALE = float(os.environ.get("HIGGSFIELD_CFG_SCALE", "0.5"))
+
+# Список того, чего в рекламном кадре быть не должно. Поле `negative_prompt`
+# у Kling есть, и до сих пор мы его не использовали вовсе — отправляли
+# пустую строку по умолчанию.
+#
+# Сюда попали только те дефекты, которые мы действительно видели на своих
+# роликах: плывущая форма товара, выдуманные надписи на упаковке (модель не
+# умеет писать буквы) и чужой водяной знак, который приходилось срезать
+# кадрированием. Выдумывать список «на всякий случай» смысла нет: каждый
+# лишний запрет отъедает у модели внимание.
+HIGGSFIELD_NEGATIVE = os.environ.get(
+    "HIGGSFIELD_NEGATIVE_PROMPT",
+    "warped product shape, morphing logo, distorted packaging, "
+    "garbled text, misspelled letters, watermark, subtitles, "
+    "extra fingers, deformed hands",
+)
+
 
 class ContentRejected(VideoError):
     """Кадр отклонён по содержанию.
@@ -284,7 +333,10 @@ def _higgsfield_headers(cfg: Config) -> dict:
     }
 
 
-def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path) -> ClipResult:
+def _via_higgsfield(
+    cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path,
+    model: str | None = None,
+) -> ClipResult:
     """Клип через собственный API Higgsfield.
 
     Схема запроса взята из их openapi.json, а не угадана: обязательны
@@ -299,12 +351,18 @@ def _via_higgsfield(cfg: Config, image_public_url: str, motion_prompt: str, out_
     if not cfg.higgsfield_credential:
         raise VideoError("HF_KEY (или HF_API_KEY и HF_API_SECRET) не задан")
 
-    model = cfg.higgsfield_video_model.strip("/")
+    # Модель приходит от маршрутизатора: крючку достаётся pro, фону —
+    # standard. Настройка из окружения остаётся запасным вариантом, а не
+    # единственным, как было раньше.
+    model = (model or cfg.higgsfield_video_model).strip("/")
     payload = {
         "prompt": motion_prompt,
         "image_url": image_public_url,
         "duration": HIGGSFIELD_DURATION,
+        "cfg_scale": HIGGSFIELD_CFG_SCALE,
     }
+    if HIGGSFIELD_NEGATIVE.strip():
+        payload["negative_prompt"] = HIGGSFIELD_NEGATIVE.strip()
     headers = _higgsfield_headers(cfg)
 
     try:

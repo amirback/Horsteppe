@@ -75,7 +75,7 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
 
         cls.calls: list[str] = []
 
-        def fake_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
+        def fake_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None, provider=None):
             """Стоит как настоящий вызов, но ничего не платит."""
             cls.calls.append(image_url)
             out_path.write_bytes(cls.clip.read_bytes())

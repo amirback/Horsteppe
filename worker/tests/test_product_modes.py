@@ -88,7 +88,7 @@ class ModeSetup:
         cls.animated: list[str] = []
         cls.generated_prompts: list[str] = []
 
-        def fake_clip(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
+        def fake_clip(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None, provider=None):
             cls.animated.append(image_url)
             media.run_ffmpeg(["-f", "lavfi",
                               "-i", f"testsrc2=size={SIZE[0]}x{SIZE[1]}:rate=30:duration=5",

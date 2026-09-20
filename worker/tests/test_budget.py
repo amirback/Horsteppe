@@ -163,7 +163,7 @@ class TestPipelineRespectsTheCeiling(unittest.TestCase):
 
         cls.attempts: list[str] = []
 
-        def fake_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None):
+        def fake_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None, provider=None):
             """Заглушка, которая честно спрашивает разрешения, как настоящий шаг."""
             cls.attempts.append(image_url)
             safe_mode.require_paid(cfg, "генерация видео", COSTS["fal_video_per_clip"])

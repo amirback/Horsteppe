@@ -191,7 +191,7 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
             try:
                 done = video_step.generate_clip(
                     cfg, reference["public_url"], motion, clip_path,
-                    model=choice.model, cost_usd=choice.cost_usd,
+                    provider=choice.provider, model=choice.model, cost_usd=choice.cost_usd,
                 )
             except (video_step.VideoError, budget.BudgetExceeded) as e:
                 log.warning("[%s] клип %d не получился: %s", project_id[:8], i, e)
@@ -639,7 +639,7 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     done = video_step.generate_clip(
                         cfg, shot["image_url"],
                         shot.get("video_prompt") or shot["visual_prompt"], clip_path,
-                        model=choice.model, cost_usd=choice.cost_usd,
+                        provider=choice.provider, model=choice.model, cost_usd=choice.cost_usd,
                     )
                 except (video_step.VideoError, budget.BudgetExceeded) as e:
                     # Падение провайдера и конец денег кончаются одинаково:
