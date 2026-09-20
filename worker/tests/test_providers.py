@@ -21,13 +21,20 @@ import providers  # noqa: E402
 from providers import Capability  # noqa: E402
 
 
+# Все ключи, которые упоминает реестр. Список берётся из самого реестра, а
+# не переписывается руками: тест, перечисляющий ключи по памяти, однажды уже
+# соврал — он гасил FAL_KEY, читал настоящий HF_KEY из окружения машины и
+# уверял, что «без ключа моделей нет».
+KEY_NAMES = sorted({c.key_env for c in providers.REGISTRY if c.key_env})
+
+
 class WithKey(unittest.TestCase):
-    """Ключ провайдера считается настроенным."""
+    """Ключи провайдеров считаются настроенными — и только они."""
 
     def setUp(self) -> None:
-        self._backup = {k: os.environ.get(k) for k in ("FAL_KEY", "TOGETHER_API_KEY")}
-        os.environ["FAL_KEY"] = "test"
-        os.environ["TOGETHER_API_KEY"] = "test"
+        self._backup = {k: os.environ.get(k) for k in KEY_NAMES}
+        for key in KEY_NAMES:
+            os.environ[key] = "test"
 
     def tearDown(self) -> None:
         for key, value in self._backup.items():
@@ -35,6 +42,11 @@ class WithKey(unittest.TestCase):
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+    def forget_all_keys(self) -> None:
+        """Машина без единого настроенного провайдера."""
+        for key in KEY_NAMES:
+            os.environ[key] = ""
 
 
 class TestHardFilter(WithKey):
@@ -54,7 +66,7 @@ class TestHardFilter(WithKey):
         self.assertEqual(providers.candidates("video", aspect="21:9"), [])
 
     def test_without_a_key_nothing_is_available(self) -> None:
-        os.environ["FAL_KEY"] = ""
+        self.forget_all_keys()
         self.assertEqual(providers.candidates("video", needs_image_to_video=True), [])
 
     def test_free_image_provider_needs_no_key_at_all(self) -> None:
@@ -100,7 +112,7 @@ class TestWhyNot(WithKey):
         self.assertIn("бюджет", money)
 
     def test_missing_key_is_named(self) -> None:
-        os.environ["FAL_KEY"] = ""
+        self.forget_all_keys()
         self.assertIn("ключ", providers.why_not("video", needs_image_to_video=True))
 
 

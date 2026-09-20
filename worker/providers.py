@@ -104,6 +104,39 @@ REGISTRY: tuple[Capability, ...] = (
         quality_prior=0.92, reliability_prior=0.85, latency_prior_sec=300.0,
         key_env="FAL_KEY",
     ),
+    # Higgsfield. Раньше его здесь не было, и это был не пропуск, а дефект:
+    # маршрутизатор выбирал между моделями fal, а клип делал Higgsfield —
+    # первый в цепочке. То есть «умный выбор модели» не влиял ни на что, а
+    # в учёт затрат шла цена чужой модели.
+    #
+    # Пути и поля взяты из их openapi.json 2.0.0 (проверено 2026-09-20):
+    # всего восемь адресов, из них три — «кадр → видео». Поля разрешения ни
+    # у одной модели НЕТ — размер клипа целиком задаёт поданная картинка.
+    Capability(
+        provider="higgsfield", model="kling-video/v2.5-turbo/pro/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(5.0, 10.0), max_side=1920,
+        cost_usd=_cost("COST_HIGGSFIELD_VIDEO_CLIP", 0.35),
+        quality_prior=0.94, reliability_prior=0.88, latency_prior_sec=240.0,
+        key_env="HF_KEY",
+    ),
+    Capability(
+        provider="higgsfield", model="kling-video/v2.5-turbo/standard/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(5.0, 10.0), max_side=1920,
+        cost_usd=_cost("COST_HIGGSFIELD_VIDEO_CLIP_STD", 0.18),
+        quality_prior=0.80, reliability_prior=0.88, latency_prior_sec=150.0,
+        key_env="HF_KEY",
+    ),
+    Capability(
+        provider="higgsfield", model="minimax/hailuo-2.3/standard/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        # У hailuo свой набор длительностей: 6 и 10, пятёрки нет.
+        durations_sec=(6.0, 10.0), max_side=1920,
+        cost_usd=_cost("COST_HIGGSFIELD_HAILUO_CLIP", 0.18),
+        quality_prior=0.78, reliability_prior=0.85, latency_prior_sec=150.0,
+        key_env="HF_KEY",
+    ),
 )
 
 
@@ -136,8 +169,13 @@ def candidates(
             continue
         if aspect and cap.aspect_ratios and aspect not in cap.aspect_ratios:
             continue
-        if duration_sec and cap.durations_sec and duration_sec > max(cap.durations_sec):
-            continue
+        if duration_sec and cap.durations_sec:
+            # Проверяются обе границы. Нижняя — не формальность: у hailuo
+            # набор длительностей (6, 10), пятёрки нет, и запрос на пять
+            # секунд он отвергает. Без этой отсечки модель проходила бы
+            # отбор и отказывала уже после вызова, то есть за деньги.
+            if duration_sec > max(cap.durations_sec) or duration_sec < min(cap.durations_sec):
+                continue
         if affordable_usd is not None and cap.cost_usd > affordable_usd + 1e-9:
             continue
         out.append(cap)
