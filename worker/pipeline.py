@@ -572,9 +572,18 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             if brief is not None:
                 log.info("[%s] реклама: «%s», снимков %d", project_id[:8],
                          brief.product_name, len(references))
-            script = script_step.generate_script(
-                cfg, project["topic"], project["style"], project["duration_sec"], brief=brief
-            )
+            try:
+                script = script_step.generate_script(
+                    cfg, project["topic"], project["style"], project["duration_sec"], brief=brief
+                )
+            except script_step.ScriptFailed as e:
+                # Провайдер мог ответить, взять деньги и выдать негодный
+                # ответ. Эта трата настоящая, и журнал обязан её знать —
+                # иначе потолок бюджета считает по заниженной цифре.
+                if e.cost_usd:
+                    db.log_cost(project_id, "script", cfg.llm_provider, e.cost_usd, "неудачные попытки")
+                    guard.record(e.cost_usd, "неудачные попытки сценария")
+                raise
             # В учёт идёт тот, кто действительно написал сценарий, а не тот,
             # кто стоит первым в настройке: цепочка могла уйти к запасному.
             db.log_cost(

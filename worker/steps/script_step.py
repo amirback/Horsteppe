@@ -122,6 +122,19 @@ def _ad_schema() -> dict:
 AD_SCENES_SCHEMA = _ad_schema()
 
 
+class ScriptFailed(RuntimeError):
+    """Сценарий не написал никто из цепочки.
+
+    Несёт потраченную сумму: провайдер мог ответить и взять деньги, а ответ
+    оказаться негодным. Конвейер обязан записать эту трату, иначе потолок
+    бюджета держится на цифре меньше настоящей.
+    """
+
+    def __init__(self, message: str, cost_usd: float = 0.0) -> None:
+        super().__init__(message)
+        self.cost_usd = cost_usd
+
+
 class ScriptRefusedError(Exception):
     """The topic was declined by content moderation."""
 
@@ -262,6 +275,10 @@ def _run(cfg: Config, prompt: str, schema: dict, n: int, words_per_scene: int, t
     chain = cfg.script_provider_chain
     callers = {"openrouter": _via_openrouter, "anthropic": _via_anthropic}
     last_error: Exception | None = None
+    # Деньги, потраченные на попытки, которые ничего не дали. Отвечает
+    # провайдер — значит, вызов оплачен, даже если ответ оказался негодным.
+    # Без этой суммы журнал затрат отстаёт от кошелька.
+    wasted = 0.0
 
     for position, provider in enumerate(chain, start=1):
         if not cfg.has_script_key(provider):
@@ -279,23 +296,45 @@ def _run(cfg: Config, prompt: str, schema: dict, n: int, words_per_scene: int, t
                 log.info("script: пробуем следующего провайдера")
             continue
 
-        scenes = _validate(data, n)
-        scenes = _clamp_narration(scenes, words_per_scene)
-        log.info(
-            "script: %d сцен, сценарий написал %s (%s), стоимость $%.4f",
-            len(scenes), provider, model, cost,
-        )
+        # Проверка внутри попытки, а не после неё. Раньше негодный ответ —
+        # скажем, три сцены вместо четырёх — не передавал ход следующему
+        # провайдеру, а ронял проект целиком. Причём вызов был уже оплачен,
+        # и в журнал эта трата не попадала никогда.
+        try:
+            scenes = _clamp_narration(_validate(data, n), words_per_scene)
+        except Exception as e:  # noqa: BLE001 — ответ не той формы это не финал
+            wasted += cost
+            last_error = e
+            log.warning(
+                "script: %s (%s) ответил, но ответ негодный (потрачено $%.4f): %s",
+                provider, model, cost, e,
+            )
+            continue
+
+        total = round(cost + wasted, 6)
+        if wasted:
+            log.info(
+                "script: %d сцен, написал %s (%s), стоимость $%.4f — "
+                "из них $%.4f ушло на неудачные попытки",
+                len(scenes), provider, model, total, wasted,
+            )
+        else:
+            log.info(
+                "script: %d сцен, сценарий написал %s (%s), стоимость $%.4f",
+                len(scenes), provider, model, total,
+            )
         return {
             "title": data.get("title", title),
             "continuity": (data.get("continuity") or "").strip(),
             "scenes": scenes,
-            "cost_usd": cost,
+            "cost_usd": total,
             "provider": provider,
             "model": model,
         }
 
-    raise RuntimeError(
-        f"сценарий не написал ни один провайдер из цепочки {', '.join(chain)}: {last_error}"
+    raise ScriptFailed(
+        f"сценарий не написал ни один провайдер из цепочки {', '.join(chain)}: {last_error}",
+        cost_usd=wasted,
     )
 
 
