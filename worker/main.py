@@ -52,6 +52,28 @@ def process_job(cfg: Config, db: Db, job: dict) -> None:
 LOCK_PATH = Path(os.environ.get("WORKER_LOCK_FILE", "/tmp/horsteppe-worker.lock"))
 
 
+def _lock_owner() -> int | None:
+    """Номер процесса, записанный в замке. None — замок нечитаем."""
+    try:
+        return int(LOCK_PATH.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _is_alive(pid: int | None) -> bool:
+    """Жив ли процесс. Сигнал 0 ничего не делает, только проверяет."""
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Процесс есть, но принадлежит другому пользователю. Живой.
+        return True
+    return True
+
+
 @contextmanager
 def only_one_worker():
     """Не дать запуститься второму сборщику на этой машине.
@@ -61,31 +83,48 @@ def only_one_worker():
     В первый раз пропала финальная карточка, во второй — всё настоящее видео,
     и заметить это можно было только по неправдоподобно быстрой сборке.
 
-    Замок снимается сам при выходе, а мёртвый замок от упавшего процесса не
-    блокирует новый запуск: проверяем, жив ли записанный в нём процесс.
-    """
-    if LOCK_PATH.exists():
-        try:
-            other = int(LOCK_PATH.read_text().strip())
-            os.kill(other, 0)  # сигнал 0 — только проверка существования
-        except (ValueError, ProcessLookupError):
-            log.info("замок остался от мёртвого процесса, забираю")
-        except PermissionError:
-            raise SystemExit(f"сборщик уже работает (процесс {other}). Закройте его окно.")
-        else:
-            raise SystemExit(
-                f"сборщик уже работает (процесс {other}). Закройте старое окно и запустите заново — "
-                "иначе задачу заберёт он, со своими прежними настройками."
-            )
+    Замок создаётся одним неделимым действием (`O_EXCL`), а не проверкой с
+    последующей записью: между «файла нет» и «пишу файл» успевали пройти оба
+    процесса, и защита от двойного запуска сама себя обходила.
 
-    LOCK_PATH.write_text(str(os.getpid()))
+    Мёртвый замок от упавшего процесса не блокирует новый запуск.
+    """
+    for _ in range(2):
+        try:
+            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            owner = _lock_owner()
+            if _is_alive(owner):
+                raise SystemExit(
+                    f"Сборщик уже работает (процесс {owner}). Закройте старое окно и "
+                    "запустите заново — иначе задачу заберёт он, со своими прежними "
+                    f"настройками.\n\nЕсли окна нет, а это сообщение осталось:\n"
+                    f"    rm {LOCK_PATH}"
+                )
+            log.info("замок остался от мёртвого процесса %s, забираю", owner)
+            try:
+                LOCK_PATH.unlink()
+            except FileNotFoundError:
+                pass  # успел убрать кто-то другой — просто пробуем снова
+            continue
+        except OSError as e:
+            raise SystemExit(f"не удалось создать замок {LOCK_PATH}: {e}") from e
+        else:
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            break
+    else:
+        raise SystemExit(f"замок {LOCK_PATH} занят и не освобождается — уберите его вручную")
+
     try:
         yield
     finally:
+        # Снимаем только свой замок: чужой мог появиться, пока мы работали,
+        # если кто-то удалил наш файл руками.
         try:
-            if LOCK_PATH.exists() and LOCK_PATH.read_text().strip() == str(os.getpid()):
+            if _lock_owner() == os.getpid():
                 LOCK_PATH.unlink()
-        except OSError:
+        except (OSError, FileNotFoundError):
             pass
 
 
