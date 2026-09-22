@@ -11,7 +11,12 @@ const BUCKET = "media";
 // Не экспортируются: Next разрешает в файле маршрута только свой набор
 // экспортов и падает на сборке от любого лишнего.
 const MAX_FILES = 5;
-const MAX_BYTES = 8 * 1024 * 1024;
+// Предел площадки на тело запроса — 4.5 МБ, и он срабатывает раньше нашего.
+// Обещать 8 МБ значило бы врать: файл такого размера сюда просто не доедет,
+// а человек увидит пустую ошибку вместо объяснения. Браузер ужимает снимки
+// до отправки (app/lib/shrink-photo.ts), так что предел не мешает.
+const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
 // Меньше этого снимок бесполезен: провайдер вернёт мыло, и никакая настройка
 // генерации этого не исправит. Порог совпадает с worker/references.py.
 const MIN_SIDE = 256;
@@ -127,6 +132,14 @@ export async function POST(request: Request) {
   }
   if (files.length > MAX_FILES) {
     return NextResponse.json({ error: "too_many_files", limit: MAX_FILES }, { status: 400 });
+  }
+
+  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+  if (totalBytes > MAX_TOTAL_BYTES) {
+    return NextResponse.json(
+      { error: "upload_too_heavy", limit_mb: MAX_TOTAL_BYTES / 1024 / 1024 },
+      { status: 400 }
+    );
   }
 
   const admin = createAdminClient();

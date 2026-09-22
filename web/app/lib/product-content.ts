@@ -94,7 +94,8 @@ export const productStudio: Record<Lang, ProductDict> = {
     errors: {
       no_files: "Add at least one photo.",
       too_many_files: "Five photos is the maximum.",
-      file_too_large: "That file is over 8 MB.",
+      file_too_large: "That file is over 4 MB.",
+      upload_too_heavy: "These photos are too heavy even after shrinking. Try fewer, or smaller ones.",
       unsupported_format: "Only JPG, PNG and WebP are supported.",
       corrupted_image: "That file could not be read as an image.",
       image_too_small: "The photo is too small — at least 256 px on the shorter side.",
@@ -153,7 +154,8 @@ export const productStudio: Record<Lang, ProductDict> = {
     errors: {
       no_files: "Добавьте хотя бы одну фотографию.",
       too_many_files: "Больше пяти фотографий не нужно.",
-      file_too_large: "Файл больше 8 МБ.",
+      file_too_large: "Файл больше 4 МБ.",
+      upload_too_heavy: "Фотографии слишком тяжёлые даже после сжатия. Возьмите меньше или полегче.",
       unsupported_format: "Подходят только JPG, PNG и WebP.",
       corrupted_image: "Файл не читается как картинка.",
       image_too_small: "Фотография слишком мелкая — нужно от 256 пикселей по короткой стороне.",
@@ -212,7 +214,8 @@ export const productStudio: Record<Lang, ProductDict> = {
     errors: {
       no_files: "Кемінде бір фото қосыңыз.",
       too_many_files: "Бес фотодан артық қажет емес.",
-      file_too_large: "Файл 8 МБ-тан үлкен.",
+      file_too_large: "Файл 4 МБ-тан үлкен.",
+      upload_too_heavy: "Фотолар сығылғаннан кейін де тым ауыр. Азырақ немесе жеңілірек таңдаңыз.",
       unsupported_format: "Тек JPG, PNG және WebP жарайды.",
       corrupted_image: "Файл сурет ретінде оқылмайды.",
       image_too_small: "Фото тым кішкентай — қысқа жағы кемінде 256 пиксель болуы керек.",
