@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import time
 from typing import Any
 
 from supabase import Client, create_client
@@ -12,6 +13,12 @@ from config import Config
 log = logging.getLogger("worker.db")
 
 BUCKET = "media"
+
+# Сколько раз пробовать загрузку и с какой паузой. Три попытки с ростом
+# паузы переживают короткий обрыв связи и не превращают сбой хранилища в
+# повторную оплату клипов.
+UPLOAD_ATTEMPTS = 3
+UPLOAD_BACKOFF_SEC = 2.0
 
 # Значения дублируются в проверках миграции 0004; тест стережёт расхождение.
 PROJECT_TYPES = ("general_video", "product_ad", "image_to_video")
@@ -185,9 +192,30 @@ class Db:
     # ---------- storage ----------
 
     def upload(self, path: str, data: bytes, content_type: str | None = None) -> str:
-        """Upload bytes to the public media bucket, return the public URL."""
+        """Положить файл в публичное хранилище и вернуть ссылку.
+
+        Повторы здесь не роскошь. Загрузка стоит между оплаченным клипом и
+        записью о его оплате: один обрыв сети ронял весь проект, задача
+        уходила на повтор, и провайдеру платили второй раз за те же кадры.
+
+        Повторять безопасно: `upsert` перезаписывает файл, а не плодит копии.
+        """
         content_type = content_type or mimetypes.guess_type(path)[0] or "application/octet-stream"
-        self.client.storage.from_(BUCKET).upload(
-            path, data, {"content-type": content_type, "upsert": "true"}
-        )
-        return self.client.storage.from_(BUCKET).get_public_url(path)
+        last: Exception | None = None
+        for attempt in range(1, UPLOAD_ATTEMPTS + 1):
+            try:
+                self.client.storage.from_(BUCKET).upload(
+                    path, data, {"content-type": content_type, "upsert": "true"}
+                )
+                return self.client.storage.from_(BUCKET).get_public_url(path)
+            except Exception as e:  # noqa: BLE001 — причина сбоя хранилища не типизирована
+                last = e
+                if attempt == UPLOAD_ATTEMPTS:
+                    break
+                pause = UPLOAD_BACKOFF_SEC * attempt
+                log.warning(
+                    "загрузка %s не удалась (попытка %d из %d), повтор через %.0f с: %s",
+                    path, attempt, UPLOAD_ATTEMPTS, pause, e,
+                )
+                time.sleep(pause)
+        raise RuntimeError(f"не удалось загрузить {path} за {UPLOAD_ATTEMPTS} попытки: {last}") from last

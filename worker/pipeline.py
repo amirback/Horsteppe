@@ -198,9 +198,13 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
                 log.warning("[%s] клип %d не получился: %s", project_id[:8], i, e)
                 db.update_shot(shot["id"], failure_reason=str(e)[:500])
                 continue
-            url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
+            # Трата записывается сразу, до загрузки. Деньги ушли в тот миг,
+            # когда провайдер ответил, и журнал обязан это знать даже если
+            # всё дальнейшее сорвётся: иначе потолок держится на цифре,
+            # которая меньше настоящей.
             db.log_cost(project_id, "video", done.provider, done.cost_usd, f"shot {i}")
             guard.record(done.cost_usd, f"клип {i}")
+            url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
             db.update_shot(shot["id"], video_url=url, status="video_done",
                            generation_mode="real_video", actual_cost_usd=done.cost_usd,
                            provider=done.provider, model=done.model)
@@ -564,9 +568,9 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             # пользователю. Расхождение в 40 мс на сцену накапливается и делает
             # длину в интерфейсе не равной длине файла.
             duration = media.exact_duration_sec(audio_path)
-            url = db.upload(f"projects/{project_id}/scene_{i:02d}/audio.mp3", audio_path.read_bytes(), "audio/mpeg")
             db.log_cost(project_id, "tts", "elevenlabs", cost, f"scene {i}")
             guard.record(cost, f"озвучка сцены {i}")
+            url = db.upload(f"projects/{project_id}/scene_{i:02d}/audio.mp3", audio_path.read_bytes(), "audio/mpeg")
             db.update_scene(
                 scene["id"],
                 audio_url=url,
@@ -615,9 +619,9 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             db.set_progress(project_id, f"Кадры: {i + 1}/{shot_total}")
             image_path = work_dir / f"shot_{i:02d}.png"
             cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)
-            url = db.upload(f"projects/{project_id}/shot_{i:02d}/image.png", image_path.read_bytes(), "image/png")
             db.log_cost(project_id, "image", cfg.image_providers[0], cost, f"shot {i}")
             guard.record(cost, f"кадр {i}")
+            url = db.upload(f"projects/{project_id}/shot_{i:02d}/image.png", image_path.read_bytes(), "image/png")
             db.update_shot(shot["id"], image_url=url, status="image_done", actual_cost_usd=cost)
             shot.update(image_url=url)
 
@@ -678,7 +682,11 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     log.warning("[%s] кадр %d без настоящего видео: %s", project_id[:8], i, e)
                     db.update_shot(shot["id"], failure_reason=str(e)[:500])
                     continue
-                url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
+                # Трата записывается до загрузки: деньги ушли в тот миг, когда
+                # провайдер ответил. Раньше запись стояла после загрузки, и
+                # один обрыв связи ронял проект с уже оплаченными клипами,
+                # которых не было в журнале — повтор платил за них снова.
+                #
                 # Записываем того, кто ДЕЙСТВИТЕЛЬНО сделал клип, а не того,
                 # кого предложил маршрутизатор. Маршрутизатор знает только
                 # модели fal, а цепочка отдаёт кадр первому доступному
@@ -692,6 +700,7 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     )
                 db.log_cost(project_id, "video", done.provider, done.cost_usd, f"shot {i}")
                 guard.record(done.cost_usd, f"видео кадра {i}")
+                url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
                 # Только здесь кадр становится настоящим видео: движение по
                 # картинке засчитывать в real_video нельзя.
                 db.update_shot(
