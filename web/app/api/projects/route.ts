@@ -82,6 +82,29 @@ function ownStagedFiles(raw: unknown, userId: string): StagedFile[] | null {
 }
 
 /**
+ * Пометить проект несостоявшимся.
+ *
+ * Любой сбой ПОСЛЕ создания строки проекта обязан оставить его в конечном
+ * состоянии. Иначе проект висит «в очереди» вечно: задачи у него нет, значит
+ * сборщик его никогда не возьмёт, — но он считается активным и по лимиту
+ * одновременных работ блокирует человеку создание новых. Сообщение при этом
+ * отправляет смотреть на страницу «Мои видео», где ничего не происходит.
+ */
+async function failProject(
+  admin: ReturnType<typeof createAdminClient>, id: string, message: string
+): Promise<void> {
+  const { error } = await admin
+    .from("projects")
+    .update({ status: "failed", error_message: message, status_detail: null })
+    .eq("id", id);
+  if (error) {
+    // Больше сделать нечего, но молчать нельзя: такой проект и есть тот
+    // самый вечный «в очереди», и в логе должно остаться, откуда он взялся.
+    console.error("could not mark project failed:", id, error.message);
+  }
+}
+
+/**
  * Постановка проекта в производство.
  *
  * Ошибки возвращаются машинными кодами, а не текстом: сайт трёхъязычный,
@@ -218,10 +241,7 @@ export async function POST(request: Request) {
       const { error: moveError } = await admin.storage.from(BUCKET).move(file.path, destination);
       if (moveError) {
         console.error("reference move failed:", moveError.message);
-        await admin
-          .from("projects")
-          .update({ status: "failed", error_message: "Не удалось сохранить фотографии" })
-          .eq("id", project.id);
+        await failProject(admin, project.id, "Не удалось сохранить фотографии");
         return NextResponse.json({ error: "reference_move_failed" }, { status: 500 });
       }
       const { data: published } = admin.storage.from(BUCKET).getPublicUrl(destination);
@@ -240,6 +260,7 @@ export async function POST(request: Request) {
     const { error: referenceError } = await admin.from("project_references").insert(rows);
     if (referenceError) {
       console.error("reference insert failed:", referenceError.message);
+      await failProject(admin, project.id, "Не удалось прикрепить фотографии");
       return NextResponse.json({ error: "reference_save_failed" }, { status: 500 });
     }
   }
@@ -247,10 +268,7 @@ export async function POST(request: Request) {
   const { error: jobError } = await admin.from("jobs").insert({ project_id: project.id });
   if (jobError) {
     console.error("job insert failed:", jobError.message);
-    await admin
-      .from("projects")
-      .update({ status: "failed", error_message: "Ошибка постановки в очередь" })
-      .eq("id", project.id);
+    await failProject(admin, project.id, "Ошибка постановки в очередь");
     return NextResponse.json({ error: "queue_failed" }, { status: 500 });
   }
 
