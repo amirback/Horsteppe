@@ -333,6 +333,53 @@ def _prepare_references(
     return prepared
 
 
+def _drop_blind_shots(shots: list[dict]) -> list[dict]:
+    """Убрать кадры, для которых не появилось ни клипа, ни картинки.
+
+    Такой кадр раньше доходил до монтажа и ронял его: скачивать было нечего.
+    Просто выбросить его тоже нельзя — сцена длится ровно столько, сколько
+    говорит диктор, и пропавшее время оставило бы дыру, сдвинув весь ролик.
+
+    Поэтому время отдаётся соседу по той же сцене: предыдущему, а если кадр
+    был первым — следующему. Сосед просто держится на экране дольше, и это
+    честно: показан настоящий кадр, а не заглушка.
+
+    Сцена, потерявшая все кадры до единого, остаётся пустой — здесь чинить
+    нечего, и вызывающий обязан считать это отказом.
+    """
+    by_scene: dict[str, list[dict]] = {}
+    for shot in shots:
+        by_scene.setdefault(shot["scene_id"], []).append(shot)
+
+    survivors: list[dict] = []
+    for scene_shots in by_scene.values():
+        alive = [s for s in scene_shots if s.get("video_url") or s.get("image_url")]
+        if not alive or len(alive) == len(scene_shots):
+            survivors.extend(alive)
+            continue
+
+        lost = sum(
+            float(s.get("timeline_duration") or 0)
+            for s in scene_shots
+            if s not in alive
+        )
+        # Добавку получает последний уцелевший до первого пропавшего — то
+        # есть ближайший сосед слева. Его нет только если пропал первый кадр.
+        first_missing = next(
+            i for i, s in enumerate(scene_shots)
+            if not (s.get("video_url") or s.get("image_url"))
+        )
+        before = [s for s in scene_shots[:first_missing] if s in alive]
+        heir = before[-1] if before else alive[0]
+        heir["timeline_duration"] = float(heir.get("timeline_duration") or 0) + lost
+        log.warning(
+            "кадров без картинки: %d, их %.2f с отданы соседнему кадру",
+            len(scene_shots) - len(alive), lost,
+        )
+        survivors.extend(alive)
+    return survivors
+
+
 def _render_plan(shots: list[dict], scenes: list[dict], work_dir) -> list[dict]:
     """Собрать задание монтажу из текущих решений по кадрам.
 
@@ -340,7 +387,11 @@ def _render_plan(shots: list[dict], scenes: list[dict], work_dir) -> list[dict]:
     изменились, а скачанные ассеты — нет.
     """
     by_scene: dict[str, list[dict]] = {}
-    for i, shot in enumerate(shots):
+    for shot in _drop_blind_shots(shots):
+        # Номер берётся из самого кадра, а не из позиции в списке: после
+        # выпадения слепого кадра позиции съезжают, и следующий кадр забрал
+        # бы себе уже скачанный файл соседа — молча и не тот.
+        i = int(shot.get("order_index") or 0)
         entry = {
             "duration": float(shot["timeline_duration"]),
             "motion": shot.get("camera_motion"),
@@ -361,6 +412,13 @@ def _render_plan(shots: list[dict], scenes: list[dict], work_dir) -> list[dict]:
     plan = []
     for i, scene in enumerate(scenes):
         shots_of_scene = by_scene.get(scene["id"], [])
+        if not shots_of_scene:
+            # Монтаж такую сцену не переварит: он возьмёт кадр у самой сцены,
+            # а его нет. Лучше внятный отказ здесь, чем KeyError на три слоя
+            # глубже.
+            raise RuntimeError(
+                f"сцена {i + 1} осталась без единого кадра — нечего показывать"
+            )
         if scene.get("audio_url"):
             audio_path = _download(scene["audio_url"], work_dir / f"scene_{i:02d}.mp3")
         else:
@@ -618,7 +676,20 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
 
             db.set_progress(project_id, f"Кадры: {i + 1}/{shot_total}")
             image_path = work_dir / f"shot_{i:02d}.png"
-            cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)
+            try:
+                cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)
+            except image_step.ImageError as e:
+                # Один неудавшийся кадр не стоит целого фильма. Раньше сбой
+                # здесь ронял проект — и это при том, что картинки делают
+                # бесплатные и самые капризные провайдеры, а куда более
+                # дорогой сбой видео конвейер переживал спокойно.
+                #
+                # Время этого кадра получит сосед по сцене (см. _drop_blind_shots),
+                # поэтому дыры в монтаже не будет. Подсовывать заглушку нельзя:
+                # серый прямоугольник в рекламе хуже, чем кадр чуть длиннее.
+                log.warning("[%s] кадр %d без картинки: %s", project_id[:8], i, e)
+                db.update_shot(shot["id"], failure_reason=str(e)[:500])
+                continue
             db.log_cost(project_id, "image", cfg.image_providers[0], cost, f"shot {i}")
             guard.record(cost, f"кадр {i}")
             url = db.upload(f"projects/{project_id}/shot_{i:02d}/image.png", image_path.read_bytes(), "image/png")
