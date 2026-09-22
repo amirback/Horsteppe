@@ -248,6 +248,34 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
 # столбец ради одного булева значения — это миграция на ровном месте.
 READY_MARK = "_ready"
 
+# Допуск на совпадение пропорций. Обрезка округляет размер до чётного, и
+# требовать точного равенства значило бы пересжимать снимок на каждом
+# повторе ради третьего знака после запятой.
+ASPECT_TOLERANCE = 0.01
+
+
+def _already_fitted(row: dict, aspect: tuple[int, int] | None) -> bool:
+    """Готов ли снимок к отправке провайдеру — по существу, а не по имени.
+
+    Пометка `_ready` в имени файла означала «этот снимок уже обработан», и
+    повторный прогон его пропускал. Метка ставилась и до того, как появилась
+    обрезка под формат кадра, поэтому в базе остались снимки с меткой
+    готовности и квадратными пропорциями — четыре штуки на 2026-09-22.
+    Повтор такого проекта молча возвращал потерю 44% ширины.
+
+    Размеры лежат в той же строке базы, скачивать ничего не нужно.
+    """
+    if READY_MARK not in Path(row.get("storage_path") or "").stem:
+        return False
+    if not aspect:
+        return True
+    width, height = row.get("width") or 0, row.get("height") or 0
+    if not width or not height:
+        # Размеров нет — судить не по чему. Лучше обработать заново: лишняя
+        # обрезка стоит секунды, пропущенная стоит качества.
+        return False
+    return abs(width / height - aspect[0] / aspect[1]) < ASPECT_TOLERANCE
+
 
 def _prepare_references(
     db: Db, project_id: str, rows: list[dict], work_dir: Path,
@@ -265,7 +293,7 @@ def _prepare_references(
     prepared = []
     for row in rows:
         order = int(row.get("order_index") or 0)
-        if READY_MARK in Path(row.get("storage_path") or "").stem:
+        if _already_fitted(row, aspect):
             prepared.append(row)
             continue
         try:
