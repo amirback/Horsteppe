@@ -7,10 +7,14 @@ import { studio } from "../lib/studio-content";
 import { productStudio } from "../lib/product-content";
 import { ArrowIcon } from "./ui";
 import { Magnetic, motion } from "./motion";
+import { shrinkPhoto } from "../lib/shrink-photo";
 
 const MAX_PROMPT = 500;
 const MIN_PROMPT = 8;
 const MAX_PHOTOS = 5;
+// Потолок площадки на тело запроса — 4.5 МБ. Берём с запасом: превышение
+// отвергается ею самой, и человек видит пустую ошибку вместо объяснения.
+const MAX_UPLOAD_BYTES = 4_000_000;
 
 type Mode = "general_video" | "product_ad" | "image_to_video";
 type Picked = { file: File; preview: string };
@@ -103,8 +107,26 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
       let references: unknown[] = [];
       if (photos.length > 0) {
         setUploading(true);
+        // Снимок с телефона это 3–12 МБ, а движку хватает 1536 px по
+        // длинной стороне — он всё равно ужимает до этого предела. Лишнее
+        // не отправляем: у площадки жёсткий потолок на тело запроса, и
+        // две фотографии с телефона его превышали.
         const form = new FormData();
-        photos.forEach((item) => form.append("files", item.file));
+        for (const item of photos) {
+          const { file } = await shrinkPhoto(item.file);
+          form.append("files", file);
+        }
+        const total = photos.length
+          ? Array.from(form.getAll("files")).reduce(
+              (sum, f) => sum + (f instanceof File ? f.size : 0),
+              0
+            )
+          : 0;
+        if (total > MAX_UPLOAD_BYTES) {
+          setUploading(false);
+          setError(message("upload_too_heavy"));
+          return;
+        }
         const upload = await fetch("/api/uploads", { method: "POST", body: form });
         const uploaded: { items?: unknown[]; error?: string } = await upload
           .json()
