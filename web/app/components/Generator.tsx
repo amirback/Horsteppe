@@ -16,8 +16,38 @@ const MAX_PHOTOS = 5;
 // отвергается ею самой, и человек видит пустую ошибку вместо объяснения.
 const MAX_UPLOAD_BYTES = 4_000_000;
 
+// Совпадает с MAX_BUDGET_USD в app/api/projects/route.ts.
+const MAX_BUDGET_USD = 20;
+const DRAFT_KEY = "horsteppe-draft";
+
 type Mode = "general_video" | "product_ad" | "image_to_video";
 type Picked = { file: File; preview: string };
+
+/**
+ * Потолок расходов из поля ввода.
+ *
+ * Раньше строка уходила через Number(), а Number("1,5") — это NaN, который
+ * в JSON превращается в null. Сервер читает null как «потолка нет». Человек
+ * писал «1,5», думая, что ограничил траты полутора долларами, и получал
+ * безлимит. Запятая — обычный десятичный знак в русском и казахском.
+ *
+ * null — поле пустое, потолка нет. "invalid" — отказать, не отправляя.
+ */
+function parseBudget(raw: string): number | null | "invalid" {
+  const cleaned = raw.trim().replace(/[\s$]/g, "").replace(",", ".");
+  if (cleaned === "") return null;
+  if (!/^\d+(\.\d+)?$/.test(cleaned)) return "invalid";
+  const value = Number(cleaned);
+  if (!Number.isFinite(value) || value < 0 || value > MAX_BUDGET_USD) return "invalid";
+  return value;
+}
+
+/** Черновик формы: переживает уход на страницу входа и обратно. */
+type Draft = {
+  mode: Mode; prompt: string; name: string; description: string; benefits: string;
+  audience: string; cta: string; goal: string; budget: string; voiceover: boolean;
+  style: string; duration: string; format: string;
+};
 
 /**
  * Форма «промпт → ролик».
@@ -53,9 +83,61 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
 
   const message = (code: string) => p.errors[code] ?? s.errors[code] ?? s.errors.unknown;
 
-  // Превью живут в памяти браузера: без освобождения каждая замена фотографии
-  // оставляла бы за собой мегабайты.
-  useEffect(() => () => photos.forEach((item) => URL.revokeObjectURL(item.preview)), [photos]);
+  // Превью живут в памяти браузера и освобождаются при уходе со страницы.
+  //
+  // Раньше освобождение висело на каждом изменении списка: добавил вторую
+  // фотографию — и ссылка на первую, всё ещё показанную, освобождалась.
+  // Видно это становилось после переключения режима туда и обратно: картинка
+  // монтировалась заново по мёртвой ссылке и пропадала.
+  const photosRef = useRef<Picked[]>([]);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
+  useEffect(() => () => photosRef.current.forEach((item) => URL.revokeObjectURL(item.preview)), []);
+
+  // Черновик возвращается один раз — после входа, куда форма отправила
+  // человека посреди заказа. Без этого длинный промпт пропадал.
+  useEffect(() => {
+    let raw: string | null = null;
+    try {
+      raw = sessionStorage.getItem(DRAFT_KEY);
+      sessionStorage.removeItem(DRAFT_KEY);
+    } catch {
+      return;
+    }
+    if (!raw) return;
+    try {
+      const d = JSON.parse(raw) as Partial<Draft>;
+      if (d.mode) setMode(d.mode);
+      if (d.prompt) setPrompt(d.prompt);
+      if (d.name) setName(d.name);
+      if (d.description) setDescription(d.description);
+      if (d.benefits) setBenefits(d.benefits);
+      if (d.audience) setAudience(d.audience);
+      if (d.cta) setCta(d.cta);
+      if (d.goal) setGoal(d.goal);
+      if (d.budget) setBudget(d.budget);
+      if (typeof d.voiceover === "boolean") setVoiceover(d.voiceover);
+      if (d.style) setStyle(d.style);
+      if (d.duration) setDuration(d.duration);
+      if (d.format) setFormat(d.format);
+    } catch {
+      /* испорченный черновик — начинаем с чистой формы */
+    }
+  }, []);
+
+  /** Сохранить черновик и отправить на вход. Фотографии не сохраняются: файл в хранилище браузера не положить. */
+  function toLogin() {
+    const draft: Draft = {
+      mode, prompt, name, description, benefits, audience, cta, goal, budget, voiceover, style, duration, format,
+    };
+    try {
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      /* приватный режим — черновик просто не сохранится */
+    }
+    router.push(`/${lang}/login?next=${encodeURIComponent(`/${lang}`)}`);
+  }
 
   function addPhotos(list: FileList | null) {
     if (!list) return;
@@ -73,10 +155,10 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
   }
 
   function removePhoto(index: number) {
-    setPhotos((current) => {
-      URL.revokeObjectURL(current[index].preview);
-      return current.filter((_, i) => i !== index);
-    });
+    const target = photos[index];
+    if (!target) return;
+    URL.revokeObjectURL(target.preview);
+    setPhotos((current) => current.filter((item) => item.preview !== target.preview));
   }
 
   /** Тема проекта. У рекламы её собирает форма, у остальных пишет человек. */
@@ -86,6 +168,8 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
   }
 
   async function submit() {
+    // Cmd+Enter в поле и клик по кнопке могут прийти почти одновременно.
+    if (busy) return;
     // Проверки на клиенте — вежливость, а не защита: сервер проверяет всё
     // заново. Смысл в том, чтобы человек узнал о пропущенном поле сразу.
     if (mode === "product_ad" && !name.trim()) {
@@ -101,11 +185,25 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
       areaRef.current?.focus();
       return;
     }
+    // Поле бюджета есть только у рекламы и оживления фото. В обычном ролике
+    // его не видно, и отправлять оттуда ничего нельзя.
+    const maxBudget = mode === "general_video" ? null : parseBudget(budget);
+    if (maxBudget === "invalid") {
+      setError(message("invalid_budget"));
+      return;
+    }
     setError("");
     setBusy(true);
+    // Форма отпускается только при неудаче: после успеха идёт переход на
+    // страницу проекта, и отпущенная кнопка давала создать второй.
+    let leaving = false;
     try {
       let references: unknown[] = [];
-      if (photos.length > 0) {
+      // Фотографии нужны только рекламе и оживлению. Раньше они уходили и из
+      // обычного ролика, если человек добавил их, а потом сменил режим:
+      // лишняя загрузка, мусор в хранилище, и сбой этой загрузки ронял ролик,
+      // которому фотографии вообще не нужны.
+      if (mode !== "general_video" && photos.length > 0) {
         setUploading(true);
         // Снимок с телефона это 3–12 МБ, а движку хватает 1536 px по
         // длинной стороне — он всё равно ужимает до этого предела. Лишнее
@@ -133,7 +231,8 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
           .catch(() => ({}));
         setUploading(false);
         if (upload.status === 401) {
-          router.push(`/${lang}/login?next=${encodeURIComponent(`/${lang}`)}`);
+          leaving = true;
+          toLogin();
           return;
         }
         if (!upload.ok) {
@@ -153,7 +252,7 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
           aspect_ratio: format,
           project_type: mode,
           references,
-          max_budget_usd: budget.trim() === "" ? null : Number(budget),
+          max_budget_usd: maxBudget,
           brief:
             mode === "product_ad"
               ? {
@@ -173,7 +272,8 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
       });
 
       if (res.status === 401) {
-        router.push(`/${lang}/login?next=${encodeURIComponent(`/${lang}`)}`);
+        leaving = true;
+        toLogin();
         return;
       }
 
@@ -183,12 +283,13 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
         setError(message(data.error ?? "unknown"));
         return;
       }
+      leaving = true;
       router.push(`/${lang}/projects/${data.id}`);
     } catch {
       setError(message("network"));
     } finally {
-      setBusy(false);
       setUploading(false);
+      if (!leaving) setBusy(false);
     }
   }
 

@@ -2,7 +2,6 @@
 
 import type { ReactNode } from "react";
 import Image from "next/image";
-import { motion } from "motion/react";
 
 /* ------------------------------------------------------------------ ЛОГОТИП */
 
@@ -12,15 +11,11 @@ import { motion } from "motion/react";
  * и обрезка съела бы кончик гривы.
  */
 export function Mark({ className = "", animate = false }: { className?: string; animate?: boolean }) {
+  // Появление на CSS: знак в шапке виден сразу, а не после загрузки скриптов.
   return (
-    <motion.span
-      className={`relative block ${className}`}
-      initial={animate ? { opacity: 0, scale: 0.8, rotate: -8 } : false}
-      animate={animate ? { opacity: 1, scale: 1, rotate: 0 } : undefined}
-      transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-    >
+    <span className={`relative block ${animate ? "mark-in" : ""} ${className}`}>
       <Image src="/logo.png" alt="" fill sizes="56px" priority className="object-contain" />
-    </motion.span>
+    </span>
   );
 }
 

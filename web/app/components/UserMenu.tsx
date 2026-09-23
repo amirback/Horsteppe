@@ -25,24 +25,34 @@ export function UserMenu({ lang, email }: { lang: Lang; email: string }) {
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
+    // pointerdown, а не mousedown: на iPhone касание пустого места страницы
+    // не порождает mousedown, и меню не закрывалось ничем, кроме аватара.
+    const onDown = (e: PointerEvent) => {
       if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
 
   async function signOut() {
+    if (busy) return;
     setBusy(true);
     try {
-      await createClient().auth.signOut();
+      // Выход только с этого устройства. По умолчанию Supabase выходит
+      // отовсюду: выход на телефоне разлогинивал и ноутбук, чего никто не
+      // ждёт от кнопки «Выйти».
+      //
+      // Сессию в браузере библиотека стирает даже при сбое сети (проверено
+      // по auth-js: removeCurrentSession вызывается и в ветке ошибки), так что
+      // переход на главную честен в любом случае.
+      await createClient().auth.signOut({ scope: "local" }).catch(() => undefined);
       router.push(`/${lang}`);
       router.refresh();
     } finally {
@@ -80,6 +90,7 @@ export function UserMenu({ lang, email }: { lang: Lang; email: string }) {
           </div>
           <Link
             href={`/${lang}/projects`}
+            role="menuitem"
             onClick={() => setOpen(false)}
             className="block px-4 py-3 text-[14px] text-ink-soft transition hover:bg-ink/5 hover:text-ink"
           >
@@ -87,6 +98,7 @@ export function UserMenu({ lang, email }: { lang: Lang; email: string }) {
           </Link>
           <Link
             href={`/${lang}#top`}
+            role="menuitem"
             onClick={() => setOpen(false)}
             className="block px-4 py-3 text-[14px] text-ink-soft transition hover:bg-ink/5 hover:text-ink"
           >
@@ -94,6 +106,7 @@ export function UserMenu({ lang, email }: { lang: Lang; email: string }) {
           </Link>
           <button
             type="button"
+            role="menuitem"
             onClick={signOut}
             disabled={busy}
             className="block w-full px-4 py-3 text-left text-[14px] text-ink-soft transition hover:bg-ink/5 hover:text-ink disabled:opacity-60"

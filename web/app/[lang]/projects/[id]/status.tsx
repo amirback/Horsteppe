@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import type { Lang } from "../../../lib/i18n";
 import { studio } from "../../../lib/studio-content";
+import { usePolling, type PollOutcome } from "../../../lib/use-polling";
+import { degradedText, failureText, progressText } from "../../../lib/worker-text";
+import { seconds } from "../../../lib/format";
 import { ArrowIcon, CheckIcon } from "../../../components/ui";
 import { motion } from "../../../components/motion";
 import { Nav } from "../../../components/Nav";
@@ -38,6 +41,25 @@ type Data = {
 
 const POLL_MS = 3000;
 
+function isFinal(status: Data["project"]["status"]): boolean {
+  return status === "done" || status === "done_degraded" || status === "failed";
+}
+
+/**
+ * Ссылка, по которой файл именно скачивается, а не открывается.
+ *
+ * Атрибут `download` работает только для адресов того же сайта. Ролик
+ * лежит в хранилище на другом домене, и кнопка «Скачать» открывала видео
+ * во вкладке — на телефоне это ещё и полноэкранный плеер без выхода назад.
+ * Хранилище Supabase понимает параметр `download` и само отдаёт файл как
+ * вложение с нужным именем.
+ */
+function downloadUrl(url: string, projectId: string): string {
+  const name = `horsteppe-${projectId.slice(0, 8)}.mp4`;
+  return `${url}${url.includes("?") ? "&" : "?"}download=${encodeURIComponent(name)}`;
+}
+
+
 /**
  * Страница проекта.
  *
@@ -52,52 +74,41 @@ export function ProjectStatus({
 }: {
   lang: Lang;
   projectId: string;
-  email: string | null;
+  email?: string | null;
 }) {
   const s = studio[lang];
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async (): Promise<Data | null> => {
+  const load = useCallback(async (): Promise<PollOutcome> => {
     try {
       const res = await fetch(`/api/projects/${projectId}`, { cache: "no-store" });
       if (!res.ok) {
         const body: { error?: string } = await res.json().catch(() => ({}));
         setError(s.errors[body.error ?? "unknown"] ?? s.errors.unknown);
-        return null;
+        // Проекта нет, он чужой или сессия истекла — повтор этого не
+        // исправит. Раньше страница спрашивала об этом каждые три секунды
+        // вечно.
+        return res.status === 401 || res.status === 403 || res.status === 404 ? "stop" : "error";
       }
       const body: Data = await res.json();
       setData(body);
       setError(null);
-      return body;
+      return isFinal(body.project.status) ? "stop" : "continue";
     } catch {
       setError(s.errors.network);
-      return null;
+      return "error";
     }
   }, [projectId, s]);
 
-  useEffect(() => {
-    let stopped = false;
-    async function tick() {
-      const body = await load();
-      if (stopped) return;
-      const status = body?.project.status;
-      if (status === "done" || status === "done_degraded" || status === "failed") return;
-      timer.current = setTimeout(tick, POLL_MS);
-    }
-    tick();
-    return () => {
-      stopped = true;
-      if (timer.current) clearTimeout(timer.current);
-    };
-  }, [load]);
+  const restartPolling = usePolling(load, POLL_MS);
 
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
 
   /** Ставит упавший проект обратно в очередь и возобновляет опрос состояния. */
   const retry = useCallback(async () => {
+    if (retrying) return;
     setRetrying(true);
     setRetryError(null);
     try {
@@ -107,27 +118,14 @@ export function ProjectStatus({
         setRetryError(s.errors[body.error ?? "unknown"] ?? s.errors.unknown);
         return;
       }
-      const body = await load();
-      // Опрос сам себя не перезапустит: он остановился, когда проект упал.
-      if (
-        body &&
-        body.project.status !== "done" &&
-        body.project.status !== "done_degraded" &&
-        body.project.status !== "failed"
-      ) {
-        timer.current = setTimeout(async function tick() {
-          const next = await load();
-          const status = next?.project.status;
-          if (status === "done" || status === "done_degraded" || status === "failed") return;
-          timer.current = setTimeout(tick, POLL_MS);
-        }, POLL_MS);
-      }
+      // Опрос остановился, когда проект упал, — будим его.
+      restartPolling();
     } catch {
       setRetryError(s.errors.network);
     } finally {
       setRetrying(false);
     }
-  }, [projectId, s, load]);
+  }, [projectId, s, retrying, restartPolling]);
 
   const project = data?.project;
   const render = data?.render;
@@ -137,6 +135,8 @@ export function ProjectStatus({
   const done = (project?.status === "done" || degraded) && render;
   const failed = project?.status === "failed";
   const coverage = project?.real_video_coverage;
+  const degradedNote = degradedText(project?.degraded_reason, lang);
+  const failureNote = retryError ?? failureText(project?.error_message, lang) ?? s.errors.unknown;
 
   return (
     <>
@@ -159,9 +159,9 @@ export function ProjectStatus({
               {project.topic}
             </p>
 
-            {done && project.degraded_reason ? (
+            {done && degradedNote ? (
               <p className="mt-4 max-w-2xl rounded-2xl border border-ink/15 bg-white/60 px-4 py-3 text-[13.5px] leading-relaxed text-ink-soft/85">
-                {project.degraded_reason}
+                {degradedNote}
               </p>
             ) : null}
 
@@ -189,7 +189,7 @@ export function ProjectStatus({
                 </div>
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <a
-                    href={render!.final_video_url}
+                    href={downloadUrl(render!.final_video_url, project.id)}
                     download
                     className="nav-link inline-flex items-center gap-2 rounded-full bg-ink px-6 py-3.5 text-cream transition hover:bg-forest"
                   >
@@ -204,7 +204,7 @@ export function ProjectStatus({
                   </Link>
                   {render!.duration_sec ? (
                     <span className="text-[13px] text-ink-soft/60">
-                      {s.project.duration}: {Math.round(render!.duration_sec)} s
+                      {s.project.duration}: {seconds(render!.duration_sec, lang)}
                     </span>
                   ) : null}
                 </div>
@@ -212,7 +212,7 @@ export function ProjectStatus({
             ) : failed ? (
               <div className="mt-8 max-w-2xl rounded-2xl border border-ember/40 bg-white/60 px-5 py-4">
                 <p className="text-[14.5px] leading-relaxed text-ember">
-                  {retryError ?? project.error_message ?? s.errors.unknown}
+                  {failureNote}
                 </p>
                 <div className="mt-4 flex flex-wrap items-center gap-3">
                   <button
@@ -232,7 +232,12 @@ export function ProjectStatus({
                 </div>
               </div>
             ) : (
-              <Progress detail={project.status_detail} scenes={data!.scenes} stages={s.project.stages} scenesLabel={s.project.scenes} />
+              <Progress
+                detail={progressText(project.status_detail, lang)}
+                scenes={data!.scenes}
+                stages={s.project.stages}
+                scenesLabel={s.project.scenes}
+              />
             )}
           </>
         ) : !error ? (

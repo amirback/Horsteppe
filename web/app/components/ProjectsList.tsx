@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 import type { Lang } from "../lib/i18n";
 import { studio } from "../lib/studio-content";
+import { usePolling, type PollOutcome } from "../lib/use-polling";
+import { progressText } from "../lib/worker-text";
+import { seconds, when } from "../lib/format";
 import { Nav } from "./Nav";
 import { Ambience } from "./Ambience";
 import { Footer } from "./Footer";
@@ -16,7 +19,7 @@ type Project = {
   style: string;
   duration_sec: number;
   aspect_ratio: string | null;
-  status: "queued" | "generating" | "done" | "failed";
+  status: "queued" | "generating" | "done" | "done_degraded" | "failed";
   status_detail: string | null;
   created_at: string;
 };
@@ -35,43 +38,31 @@ const POLL_MS = 5000;
  * перестаёт дёргать сервер. Из-за отсутствия такой страницы было непонятно,
  * что именно висит в работе, когда лимит запрещал запускать новое.
  */
-export function ProjectsList({ lang, email }: { lang: Lang; email: string | null }) {
+export function ProjectsList({ lang, email }: { lang: Lang; email?: string | null }) {
   const s = studio[lang];
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async (): Promise<Data | null> => {
+  const load = useCallback(async (): Promise<PollOutcome> => {
     try {
       const res = await fetch("/api/projects", { cache: "no-store" });
       if (!res.ok) {
         const body: { error?: string } = await res.json().catch(() => ({}));
         setError(s.errors[body.error ?? "unknown"] ?? s.errors.unknown);
-        return null;
+        return res.status === 401 || res.status === 403 ? "stop" : "error";
       }
       const body: Data = await res.json();
       setData(body);
       setError(null);
-      return body;
+      // Опрос нужен, только пока что-то собирается.
+      return body.counts.active > 0 ? "continue" : "stop";
     } catch {
       setError(s.errors.network);
-      return null;
+      return "error";
     }
   }, [s]);
 
-  useEffect(() => {
-    let stopped = false;
-    async function tick() {
-      const body = await load();
-      if (stopped) return;
-      if ((body?.counts.active ?? 0) > 0) timer.current = setTimeout(tick, POLL_MS);
-    }
-    tick();
-    return () => {
-      stopped = true;
-      if (timer.current) clearTimeout(timer.current);
-    };
-  }, [load]);
+  usePolling(load, POLL_MS);
 
   const counts = data?.counts;
 
@@ -132,13 +123,16 @@ export function ProjectsList({ lang, email }: { lang: Lang; email: string | null
                   <div className="min-w-0">
                     <div className="truncate text-[15px] font-medium text-ink">{p.topic}</div>
                     <div className="mt-1 text-[12.5px] text-ink-soft/60">
-                      {new Date(p.created_at).toLocaleString(lang === "en" ? "en-GB" : lang)} · {p.duration_sec}s ·{" "}
-                      {p.aspect_ratio ?? "9:16"}
+                      {when(p.created_at, lang)} · {seconds(p.duration_sec, lang)} · {p.aspect_ratio ?? "9:16"}
                     </div>
                   </div>
 
                   <div className="flex shrink-0 items-center gap-3">
-                    <Badge status={p.status} label={s.library.statuses[p.status] ?? p.status} detail={p.status_detail} />
+                    <Badge
+                      status={p.status}
+                      label={s.library.statuses[p.status] ?? s.library.statuses.done}
+                      detail={progressText(p.status_detail, lang)}
+                    />
                     <ArrowIcon className="h-4 w-4 text-ink-soft/40 transition group-hover:translate-x-0.5 group-hover:text-ink" />
                   </div>
                 </Link>
@@ -172,7 +166,7 @@ function Stat({ label, value, accent = false }: { label: string; value: number; 
 function Badge({ status, label, detail }: { status: string; label: string; detail: string | null }) {
   const active = status === "queued" || status === "generating";
   const tone =
-    status === "done"
+    status === "done" || status === "done_degraded"
       ? "border-sage/50 bg-sage/15 text-forest"
       : status === "failed"
         ? "border-ember/40 bg-ember/10 text-ember"

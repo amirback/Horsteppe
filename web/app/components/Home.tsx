@@ -14,7 +14,7 @@ import { motion, Words, Reveal, Stagger, StaggerItem } from "./motion";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
-export function Home({ lang, email }: { lang: Lang; email: string | null }) {
+export function Home({ lang, email }: { lang: Lang; email?: string | null }) {
   const t = content[lang];
 
   const heroRef = useRef<HTMLElement>(null);
@@ -41,30 +41,22 @@ export function Home({ lang, email }: { lang: Lang; email: string | null }) {
             <Words text={t.hero.title} delay={0.1} />
           </h1>
 
-          <motion.p
-            className="mx-auto mt-4 max-w-[34ch] text-[15px] leading-[1.45] text-ink-soft sm:text-[18px] md:mt-5"
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.85, delay: 0.5, ease: EASE }}
+          {/* Появление на CSS: первый экран не должен ждать скриптов. */}
+          <p
+            className="rise mx-auto mt-4 max-w-[34ch] text-[15px] leading-[1.45] text-ink-soft sm:text-[18px] md:mt-5"
+            style={{ "--d": "0.5s" } as React.CSSProperties}
           >
             {t.hero.sub}
-          </motion.p>
+          </p>
 
-          <motion.div
-            className="mt-8 w-full sm:mt-10"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.85, delay: 0.68, ease: EASE }}
-          >
+          <div className="rise mt-8 w-full sm:mt-10" style={{ "--d": "0.68s" } as React.CSSProperties}>
             <Generator lang={lang} variant="hero" />
-          </motion.div>
+          </div>
 
-          <motion.a
+          <a
             href="#how"
-            className="nav-link mt-8 inline-flex items-center gap-2 text-ink-soft/60 transition hover:text-ink"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.8, delay: 0.95 }}
+            className="rise nav-link mt-8 inline-flex items-center gap-2 text-ink-soft/60 transition hover:text-ink"
+            style={{ "--d": "0.95s" } as React.CSSProperties}
           >
             {t.hero.scroll}
             <motion.span
@@ -75,7 +67,7 @@ export function Home({ lang, email }: { lang: Lang; email: string | null }) {
                 <path d="M10 4v12m0 0l-5-5m5 5l5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </motion.span>
-          </motion.a>
+          </a>
         </motion.div>
       </header>
 

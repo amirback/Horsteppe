@@ -1,11 +1,22 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { LegalPage } from "../../components/LegalPage";
-import { getSessionEmail } from "../../lib/session";
+import { pageMetadata } from "../../lib/seo";
+import { legalNav } from "../../lib/legal-nav";
 import { isLang } from "../../lib/i18n";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}): Promise<Metadata> {
+  const { lang } = await params;
+  if (!isLang(lang)) return {};
+  return pageMetadata(lang, "/cookies", { title: legalNav[lang].cookies });
+}
 
 export default async function Page({ params }: { params: Promise<{ lang: string }> }) {
   const { lang } = await params;
   if (!isLang(lang)) notFound();
-  const email = await getSessionEmail();
-  return <LegalPage lang={lang} doc="cookies" email={email} />;
+  return <LegalPage lang={lang} doc="cookies" />;
 }

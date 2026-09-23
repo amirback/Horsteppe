@@ -125,19 +125,32 @@ def current() -> BudgetGuard | None:
     return getattr(_local, "guard", None)
 
 
-def bind(max_budget_usd: float | None, reserve_ratio: float = REPAIR_RESERVE_RATIO) -> BudgetGuard:
+def bind(
+    max_budget_usd: float | None,
+    reserve_ratio: float = REPAIR_RESERVE_RATIO,
+    already_spent_usd: float = 0.0,
+) -> BudgetGuard:
     """Привязать страж к текущему проекту. Парная `unbind()` обязательна.
 
     Пара bind/unbind существует рядом с контекстным менеджером не для красоты:
     конвейер уже обёрнут в try/finally, и заворачивать его целиком в ещё один
     отступ значит переписать файл ради одной строки.
+
+    `already_spent_usd` — сколько проект потратил в прошлых запусках. Без
+    него потолок был потолком одной сборки, а не проекта: каждый автоповтор
+    упавшей задачи и каждое нажатие «Попробовать снова» начинали счёт с нуля,
+    и потолок в $1 оборачивался $1 за каждую попытку.
     """
-    guard = BudgetGuard(max_budget_usd=max_budget_usd, reserve_ratio=reserve_ratio)
+    guard = BudgetGuard(
+        max_budget_usd=max_budget_usd,
+        spent_usd=max(float(already_spent_usd or 0.0), 0.0),
+        reserve_ratio=reserve_ratio,
+    )
     _local.guard = guard
     if guard.has_ceiling:
         log.info(
-            "[BUDGET] потолок $%.2f, резерв на починку $%.4f",
-            float(max_budget_usd), guard.repair_reserve_usd,
+            "[BUDGET] потолок $%.2f, уже потрачено $%.4f, резерв на починку $%.4f",
+            float(max_budget_usd), guard.spent_usd, guard.repair_reserve_usd,
         )
     return guard
 

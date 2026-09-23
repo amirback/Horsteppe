@@ -91,6 +91,52 @@
     }
   }
 
+  /*
+   * Появление первого экрана — на CSS, а не на JavaScript.
+   *
+   * Раньше заголовок, подзаголовок и форма начинали с opacity: 0 и ждали,
+   * пока загрузятся и выполнятся скрипты. На медленном мобильном интернете
+   * это секунды пустого зелёного экрана, а если скрипт не загрузился —
+   * пустота навсегда. CSS-анимация стартует вместе с разметкой.
+   * Задержка задаётся через --d прямо в разметке.
+   */
+  .rise {
+    animation: fadeUp 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--d, 0s);
+  }
+
+  .word-rise {
+    display: inline-block;
+    animation: wordRise 0.95s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--d, 0s);
+  }
+
+  @keyframes wordRise {
+    from {
+      opacity: 0;
+      transform: translateY(110%);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .mark-in {
+    animation: markIn 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes markIn {
+    from {
+      opacity: 0;
+      transform: scale(0.8) rotate(-8deg);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
   /* Фоновые пятна дышат в разном ритме, поэтому картинка не повторяется. */
   @keyframes floatA {
     0%, 100% { transform: translate3d(0, 0, 0) scale(1); }

@@ -36,7 +36,10 @@ export async function GET() {
     counts: {
       total: projects.length,
       active: projects.filter((p) => p.status === "queued" || p.status === "generating").length,
-      done: projects.filter((p) => p.status === "done").length,
+      // Ролик с оговоркой — готовый ролик: он играется и скачивается. Раньше
+      // он не попадал ни в «готово», ни в «ошибки», и счётчики не сходились
+      // с «всего».
+      done: projects.filter((p) => p.status === "done" || p.status === "done_degraded").length,
       failed: projects.filter((p) => p.status === "failed").length,
     },
   });
@@ -139,17 +142,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_request" }, { status: 400 });
   }
 
+  const projectType = PROJECT_TYPES.includes(body.project_type ?? "")
+    ? body.project_type!
+    : "general_video";
+
+  // У рекламы тему собирает форма из названия и описания, а поля для
+  // свободного текста в этом режиме нет вовсе. Требовать восемь символов
+  // значило отказывать товару с коротким именем — «Войаж» без описания
+  // упирался в «напишите пару предложений», хотя писать было негде.
+  // Название товара проверяется ниже отдельно.
   const topic = (body.topic ?? "").trim();
-  if (topic.length < 8) {
+  const minTopic = projectType === "product_ad" ? 1 : 8;
+  if (topic.length < minTopic) {
     return NextResponse.json({ error: "topic_too_short" }, { status: 400 });
   }
   if (topic.length > 500) {
     return NextResponse.json({ error: "topic_too_long" }, { status: 400 });
   }
-
-  const projectType = PROJECT_TYPES.includes(body.project_type ?? "")
-    ? body.project_type!
-    : "general_video";
 
   const staged = ownStagedFiles(body.references, user.id);
   if (staged === null) {
@@ -196,6 +205,20 @@ export async function POST(request: Request) {
   }
 
   const dayAgo = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+
+  // Общий дневной потолок на весь сервис. Лимиты выше считаются на аккаунт,
+  // а аккаунт создаётся мгновенно и без подтверждения почты: сотня аккаунтов
+  // из скрипта — это сотня дневных лимитов. Защищать надо деньги, а не
+  // аккаунты, поэтому последний рубеж не зависит от того, сколько их.
+  const maxGlobal = Number(process.env.MAX_DAILY_GLOBAL ?? 60);
+  const { count: globalCount } = await admin
+    .from("projects")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", dayAgo);
+  if ((globalCount ?? 0) >= maxGlobal) {
+    console.warn("global daily cap reached:", globalCount);
+    return NextResponse.json({ error: "rate_limit_global" }, { status: 429 });
+  }
   const { count: dailyCount } = await admin
     .from("projects")
     .select("id", { count: "exact", head: true })

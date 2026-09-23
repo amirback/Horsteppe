@@ -2,7 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { Montserrat, Inter } from "next/font/google";
 import { notFound } from "next/navigation";
 import "../globals.css";
-import { LOCALES, LOCALE_META, SITE_URL, isLang, type Lang } from "../lib/i18n";
+import { LOCALES, LOCALE_META, SITE_URL, isLang } from "../lib/i18n";
+import { SEO } from "../lib/seo";
+import { MotionProvider } from "../components/MotionProvider";
 
 const montserrat = Montserrat({
   subsets: ["latin", "cyrillic"],
@@ -16,28 +18,15 @@ const inter = Inter({
   display: "swap",
 });
 
-const SEO: Record<Lang, { title: string; description: string }> = {
-  en: {
-    title: "Horsteppe — Orchestrating the Steppe",
-    description:
-      "The pipeline that harnesses AI to create your video masterpiece: it writes the script, plans the scenes, generates the visuals, records the voice, edits and delivers a finished MP4.",
-  },
-  ru: {
-    title: "Horsteppe — оркестровка степи",
-    description:
-      "Конвейер, который направляет ИИ на создание вашего видеошедевра: пишет сценарий, планирует сцены, создаёт визуал, озвучивает, монтирует и отдаёт готовый MP4.",
-  },
-  kk: {
-    title: "Horsteppe — дала оркестрі",
-    description:
-      "Жасанды интеллектті бейне-шедевріңізді жасауға жұмылдыратын конвейер: сценарий жазады, сценаларды жоспарлайды, кадр жасайды, дауыстайды, монтаждайды және дайын MP4 береді.",
-  },
-};
-
 export function generateStaticParams() {
   return LOCALES.map((lang) => ({ lang }));
 }
 
+/**
+ * Общая основа метаданных. Адрес, связи между языками и карточку для
+ * соцсетей каждая страница задаёт сама (app/lib/seo.ts): иначе все они
+ * наследовали канонический адрес главной и выпадали из поиска как дубли.
+ */
 export async function generateMetadata({
   params,
 }: {
@@ -45,41 +34,12 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { lang: raw } = await params;
   if (!isLang(raw)) return {};
-  const seo = SEO[raw];
-
-  // hreflang для всех языков плюс x-default — иначе поисковик считает
-  // переводы дублями и показывает не тот язык.
-  const languages = Object.fromEntries(
-    LOCALES.map((l) => [LOCALE_META[l].htmlLang, `${SITE_URL}/${l}`])
-  );
-
   return {
     metadataBase: new URL(SITE_URL),
     // На вкладке — только имя бренда: описание живёт в meta description,
     // а длинный заголовок в узкой вкладке всё равно обрезается.
     title: { default: "Horsteppe", template: "%s · Horsteppe" },
-    description: seo.description,
-    alternates: {
-      canonical: `${SITE_URL}/${raw}`,
-      languages: { ...languages, "x-default": `${SITE_URL}/en` },
-    },
-    openGraph: {
-      type: "website",
-      url: `${SITE_URL}/${raw}`,
-      siteName: "Horsteppe",
-      title: seo.title,
-      description: seo.description,
-      locale: LOCALE_META[raw].ogLocale,
-      images: [{ url: "/og.png", width: 1200, height: 630, alt: "Horsteppe" }],
-      alternateLocale: LOCALES.filter((l) => l !== raw).map((l) => LOCALE_META[l].ogLocale),
-    },
-    twitter: {
-      card: "summary_large_image",
-      title: seo.title,
-      description: seo.description,
-      images: ["/og.png"],
-    },
-    robots: { index: true, follow: true },
+    description: SEO[raw].description,
   };
 }
 
@@ -100,7 +60,16 @@ export default async function LocaleLayout({
 
   return (
     <html lang={LOCALE_META[lang].htmlLang} className={`${montserrat.variable} ${inter.variable}`}>
-      <body className="min-h-screen bg-paper text-ink antialiased">{children}</body>
+      <body className="min-h-screen bg-paper text-ink antialiased">
+        {/* Если скрипты не выполнились вовсе — блокировщик, старый браузер,
+            оборванная загрузка, — блоки с анимацией появления остались бы
+            прозрачными навсегда: они ждут JavaScript, чтобы проявиться.
+            Правило действует только когда скрипты выключены. */}
+        <noscript>
+          <style>{`[style*="opacity:0"]{opacity:1!important;transform:none!important}`}</style>
+        </noscript>
+        <MotionProvider>{children}</MotionProvider>
+      </body>
     </html>
   );
 }
