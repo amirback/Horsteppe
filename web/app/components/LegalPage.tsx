@@ -1,5 +1,5 @@
-"use client";
-
+// Серверный компонент намеренно: полные тексты документов на трёх языках
+// весят 50 КБ, и браузеру незачем их получать — ему нужен готовый HTML.
 import Link from "next/link";
 import { CONTACT_EMAIL } from "../lib/content";
 import { legal, type LegalDoc } from "../lib/legal-content";

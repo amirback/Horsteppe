@@ -1,4 +1,5 @@
 import type { Lang } from "./i18n";
+import { legalNav, type LegalDoc } from "./legal-nav";
 
 /**
  * Юридические документы и справка.
@@ -14,7 +15,7 @@ import type { Lang } from "./i18n";
 export type Section = { h: string; p: string[] };
 export type Doc = { title: string; updated: string; intro: string; sections: Section[] };
 
-export type LegalDoc = "privacy" | "terms" | "cookies" | "help";
+export type { LegalDoc };
 
 export type LegalDict = {
   nav: Record<LegalDoc, string>;
@@ -27,7 +28,7 @@ const UPDATED = "2026-09-10";
 
 export const legal: Record<Lang, LegalDict> = {
   en: {
-    nav: { privacy: "Privacy", terms: "Terms", cookies: "Cookies", help: "Help center" },
+    nav: legalNav.en,
     updatedLabel: "Last updated",
     contactNote: "Questions about any of this go to",
     docs: {
@@ -247,7 +248,7 @@ export const legal: Record<Lang, LegalDict> = {
   },
 
   ru: {
-    nav: { privacy: "Конфиденциальность", terms: "Условия", cookies: "Cookie", help: "Справка" },
+    nav: legalNav.ru,
     updatedLabel: "Обновлено",
     contactNote: "Вопросы по любому из этого —",
     docs: {
@@ -466,7 +467,7 @@ export const legal: Record<Lang, LegalDict> = {
   },
 
   kk: {
-    nav: { privacy: "Құпиялылық", terms: "Шарттар", cookies: "Cookie", help: "Анықтама" },
+    nav: legalNav.kk,
     updatedLabel: "Жаңартылды",
     contactNote: "Осының бәрі бойынша сұрақтар —",
     docs: {

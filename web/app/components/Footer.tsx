@@ -4,7 +4,7 @@ import { content, CONTACT_EMAIL } from "../lib/content";
 import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 import { rememberLang } from "./Nav";
 import Link from "next/link";
-import { legal } from "../lib/legal-content";
+import { legalNav } from "../lib/legal-nav";
 
 export function Footer({ lang }: { lang: Lang }) {
   const t = content[lang];
@@ -57,7 +57,7 @@ export function Footer({ lang }: { lang: Lang }) {
             href={`/${lang}/${key}`}
             className="text-ink-soft/65 transition hover:text-ink"
           >
-            {legal[lang].nav[key]}
+            {legalNav[lang][key]}
           </Link>
         ))}
       </div>
