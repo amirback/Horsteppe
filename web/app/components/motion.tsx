@@ -9,7 +9,7 @@ import {
   useTransform,
   type MotionValue,
 } from "motion/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 
 /** Экспоненциальное замедление — движение начинается быстро и мягко тормозит. */
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -89,6 +89,14 @@ export function StaggerItem({
 
 /* ------------------------------------------------- заголовок по словам -- */
 
+/**
+ * Заголовок, поднимающийся по словам.
+ *
+ * Анимация на CSS, а не на motion: это самый крупный текст первого экрана,
+ * и ждать ради него скриптов нельзя. Раньше до загрузки JavaScript заголовка
+ * не было видно вовсе — главная была пустым зелёным экраном. Рисунок
+ * движения прежний: те же 0.95 с, тот же шаг 75 мс между словами.
+ */
 export function Words({
   text,
   className = "",
@@ -100,29 +108,25 @@ export function Words({
 }) {
   const words = text.split(" ");
   return (
-    <motion.span
-      className={className}
-      initial="hidden"
-      animate="shown"
-      variants={{ hidden: {}, shown: { transition: { staggerChildren: 0.075, delayChildren: delay } } }}
-      aria-label={text}
-    >
+    <span className={className} aria-label={text}>
       {words.map((word, i) => (
-        <span key={`${word}-${i}`} className="inline-block overflow-hidden align-bottom">
-          <motion.span
-            className="inline-block"
-            aria-hidden="true"
-            variants={{
-              hidden: { y: "110%", opacity: 0 },
-              shown: { y: "0%", opacity: 1, transition: { duration: 0.95, ease: EASE } },
-            }}
-          >
-            {word}
-            {i < words.length - 1 ? " " : ""}
-          </motion.span>
-        </span>
+        // Пробел стоит между словами, снаружи блоков. Внутри inline-block
+        // завершающий пробел схлопывается, и заголовок читался слитно:
+        // «Оркестровкастепи.»
+        <Fragment key={`${word}-${i}`}>
+          {i > 0 ? " " : null}
+          <span className="inline-block overflow-hidden align-bottom">
+            <span
+              className="word-rise"
+              aria-hidden="true"
+              style={{ "--d": `${delay + i * 0.075}s` } as React.CSSProperties}
+            >
+              {word}
+            </span>
+          </span>
+        </Fragment>
       ))}
-    </motion.span>
+    </span>
   );
 }
 
