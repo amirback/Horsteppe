@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { content } from "../lib/content";
 import { studio } from "../lib/studio-content";
 import { LOCALES, LOCALE_META, type Lang } from "../lib/i18n";
 import { Logo } from "./ui";
 import { Magnetic, motion } from "./motion";
 import { UserMenu } from "./UserMenu";
+import { useSessionEmail } from "../lib/use-session-email";
 
 export function rememberLang(lang: Lang) {
   try {
@@ -25,16 +27,49 @@ export function rememberLang(lang: Lang) {
 export function Nav({
   lang,
   overlay = false,
-  email = null,
+  email: initialEmail,
 }: {
   lang: Lang;
   overlay?: boolean;
-  /** Почта вошедшего пользователя. null — показываем кнопку входа. */
+  /**
+   * Почта вошедшего пользователя, если её уже знает сервер. Обычно не
+   * передаётся: шапка узнаёт о входе сама, и страница остаётся статичной.
+   */
   email?: string | null;
 }) {
   const t = content[lang];
   const [open, setOpen] = useState(false);
   const [solid, setSolid] = useState(!overlay);
+  const session = useSessionEmail(initialEmail ?? undefined);
+  // Пока не знаем, вошёл ли человек, не показываем ни «Войти», ни аватар:
+  // иначе вошедший на мгновение видел бы приглашение войти.
+  const known = session !== undefined;
+  const email = session ?? null;
+  const pathname = usePathname();
+  const panel = useRef<HTMLDivElement>(null);
+
+  // Меню на телефоне закрывается переходом, клавишей Esc и касанием мимо.
+  // Раньше оно закрывалось только повторным нажатием на ту же кнопку.
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onDown = (e: PointerEvent) => {
+      const header = panel.current?.closest("header");
+      if (header && !header.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!overlay) return;
@@ -69,8 +104,8 @@ export function Nav({
           ))}
         </nav>
 
-        <div className="flex items-center gap-2">
-          {email ? null : (
+        <div ref={panel} className="flex items-center gap-2">
+          {!known || email ? null : (
             <Link
               href={`/${lang}/login`}
               className="nav-link hidden text-ink-soft/75 transition hover:text-ink sm:block"
@@ -92,8 +127,9 @@ export function Nav({
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            aria-label="Menu"
+            aria-label={t.nav.menu}
             aria-expanded={open}
+            aria-controls="mobile-menu"
             className="flex h-10 w-10 items-center justify-center rounded-full border-[1.5px] border-ink/30 text-ink transition hover:border-ink md:hidden"
           >
             <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4">
@@ -110,9 +146,10 @@ export function Nav({
 
       {open ? (
         <motion.div
+          id="mobile-menu"
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: "auto" }}
-          className="overflow-hidden border-t border-ink/10 bg-paper/95 backdrop-blur-xl md:hidden"
+          className="max-h-[calc(100svh-68px)] overflow-y-auto border-t border-ink/10 bg-paper/95 backdrop-blur-xl md:hidden"
         >
           <div className="container-x flex flex-col gap-1 py-4">
             {links.map((l) => (
@@ -125,7 +162,7 @@ export function Nav({
                 {l.label}
               </Link>
             ))}
-            {email ? (
+            {!known ? null : email ? (
               <>
                 <Link
                   href={`/${lang}/projects`}
