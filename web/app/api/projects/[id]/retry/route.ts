@@ -2,6 +2,19 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminReady } from "@/lib/supabase/env";
+import { isUuid } from "@/lib/ids";
+
+/**
+ * Сколько запусков сборщика допускается на один проект за всю его жизнь.
+ *
+ * Раньше повтор обнулял счётчик попыток задачи, и повторов было сколько
+ * угодно: каждый запускал сборщик заново, каждый мог заплатить провайдерам.
+ * Теперь счётчик копится, повтор добавляет один раунд, а потолок общий.
+ * По умолчанию 8: исходные две попытки плюс три повтора по два.
+ */
+const ATTEMPTS_CAP = Number(process.env.MAX_ATTEMPTS_PER_PROJECT ?? 8);
+/** Сколько попыток добавляет одно нажатие — столько же, сколько у новой задачи. */
+const ATTEMPTS_PER_RETRY = 2;
 
 /**
  * Повторная постановка упавшего проекта в очередь.
@@ -17,6 +30,9 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   }
 
   const { id } = await context.params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
 
   const supabase = await createClient();
   const {
@@ -54,30 +70,53 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     return NextResponse.json({ error: "rate_limit_concurrent" }, { status: 429 });
   }
 
-  // Задача на проект одна — `jobs.project_id` уникален, поэтому обновляем
-  // существующую строку, а не вставляем вторую.
+  const { data: job } = await admin
+    .from("jobs")
+    .select("id, attempts")
+    .eq("project_id", id)
+    .maybeSingle();
+  if (!job) {
+    // Проект упал до постановки в очередь — задачи нет, повторять нечего.
+    return NextResponse.json({ error: "queue_failed" }, { status: 409 });
+  }
+  const attempts = Number(job.attempts) || 0;
+  if (attempts >= ATTEMPTS_CAP) {
+    return NextResponse.json({ error: "retry_limit" }, { status: 429 });
+  }
+
+  // Сначала проект, потом задача. В обратном порядке сборщик мог успеть
+  // взять задачу и написать «Пишем сценарий…», а мы затёрли бы это своим
+  // «В очереди…». Сборщик берёт только задачи, так что проект в очереди без
+  // задачи в очереди ничего не запускает.
+  const { error: projectError } = await admin
+    .from("projects")
+    .update({ status: "queued", status_detail: "В очереди…", error_message: null })
+    .eq("id", id)
+    .eq("status", "failed"); // второй клик не перезапишет уже идущую сборку
+  if (projectError) {
+    console.error("project requeue failed:", projectError.message);
+    return NextResponse.json({ error: "queue_failed" }, { status: 500 });
+  }
+
+  // Счётчик попыток НЕ обнуляется: повтор добавляет раунд, а не открывает
+  // бесконечность.
   const { error: jobError } = await admin
     .from("jobs")
     .update({
       status: "queued",
-      attempts: 0,
+      max_attempts: Math.min(attempts + ATTEMPTS_PER_RETRY, ATTEMPTS_CAP),
       run_after: new Date().toISOString(),
       locked_at: null,
       locked_by: null,
       last_error: null,
     })
-    .eq("project_id", id);
+    .eq("id", job.id);
   if (jobError) {
     console.error("job requeue failed:", jobError.message);
-    return NextResponse.json({ error: "queue_failed" }, { status: 500 });
-  }
-
-  const { error: projectError } = await admin
-    .from("projects")
-    .update({ status: "queued", status_detail: "В очереди…", error_message: null })
-    .eq("id", id);
-  if (projectError) {
-    console.error("project requeue failed:", projectError.message);
+    await admin
+      .from("projects")
+      .update({ status: "failed", status_detail: null, error_message: "Ошибка постановки в очередь" })
+      .eq("id", id);
     return NextResponse.json({ error: "queue_failed" }, { status: 500 });
   }
 

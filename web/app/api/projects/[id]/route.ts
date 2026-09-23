@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isBackendReady } from "@/lib/supabase/env";
+import { isUuid } from "@/lib/ids";
 
 /** Состояние проекта: сам проект, его сцены и готовый рендер, если он есть. */
 export async function GET(
@@ -12,6 +13,9 @@ export async function GET(
   }
 
   const { id } = await params;
+  if (!isUuid(id)) {
+    return NextResponse.json({ error: "not_found" }, { status: 404 });
+  }
   const supabase = await createClient();
 
   // Политики доступа гарантируют, что пользователь видит только свои проекты.
