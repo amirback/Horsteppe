@@ -168,7 +168,7 @@ export const studio: Record<Lang, StudioDict> = {
       empty: "Nothing here yet.",
       emptyCta: "Create your first video",
       open: "Open",
-      statuses: { queued: "Queued", generating: "Producing", done: "Ready", failed: "Failed" },
+      statuses: { queued: "Queued", generating: "Producing", done: "Ready", done_degraded: "Ready, with a note", failed: "Failed" },
     },
     project: {
       back: "New video",
@@ -293,7 +293,7 @@ export const studio: Record<Lang, StudioDict> = {
       empty: "Пока пусто.",
       emptyCta: "Создать первый ролик",
       open: "Открыть",
-      statuses: { queued: "В очереди", generating: "Собирается", done: "Готово", failed: "Ошибка" },
+      statuses: { queued: "В очереди", generating: "Собирается", done: "Готово", done_degraded: "Готово с оговоркой", failed: "Ошибка" },
     },
     project: {
       back: "Новое видео",
@@ -418,7 +418,7 @@ export const studio: Record<Lang, StudioDict> = {
       empty: "Әзірге бос.",
       emptyCta: "Алғашқы роликті жасау",
       open: "Ашу",
-      statuses: { queued: "Кезекте", generating: "Жиналуда", done: "Дайын", failed: "Қате" },
+      statuses: { queued: "Кезекте", generating: "Жиналуда", done: "Дайын", done_degraded: "Дайын, ескертпемен", failed: "Қате" },
     },
     project: {
       back: "Жаңа бейне",

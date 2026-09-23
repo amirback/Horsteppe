@@ -36,7 +36,10 @@ export async function GET() {
     counts: {
       total: projects.length,
       active: projects.filter((p) => p.status === "queued" || p.status === "generating").length,
-      done: projects.filter((p) => p.status === "done").length,
+      // Ролик с оговоркой — готовый ролик: он играется и скачивается. Раньше
+      // он не попадал ни в «готово», ни в «ошибки», и счётчики не сходились
+      // с «всего».
+      done: projects.filter((p) => p.status === "done" || p.status === "done_degraded").length,
       failed: projects.filter((p) => p.status === "failed").length,
     },
   });
