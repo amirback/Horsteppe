@@ -18,7 +18,7 @@ const ORDER: LegalDoc[] = ["help", "privacy", "terms", "cookies"];
  * в подвале главной хватает одного ряда ссылок — сами тексты никакого места
  * на сайте не занимают.
  */
-export function LegalPage({ lang, doc, email }: { lang: Lang; doc: LegalDoc; email: string | null }) {
+export function LegalPage({ lang, doc, email }: { lang: Lang; doc: LegalDoc; email?: string | null }) {
   const l = legal[lang];
   const d = l.docs[doc];
 

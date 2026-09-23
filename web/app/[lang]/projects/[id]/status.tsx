@@ -74,7 +74,7 @@ export function ProjectStatus({
 }: {
   lang: Lang;
   projectId: string;
-  email: string | null;
+  email?: string | null;
 }) {
   const s = studio[lang];
   const [data, setData] = useState<Data | null>(null);

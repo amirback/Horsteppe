@@ -9,7 +9,7 @@ import { Footer } from "./Footer";
 import { CheckIcon } from "./ui";
 import { Reveal, Stagger, StaggerItem } from "./motion";
 
-export function PricingPage({ lang, email }: { lang: Lang; email: string | null }) {
+export function PricingPage({ lang, email }: { lang: Lang; email?: string | null }) {
   const t = content[lang];
   const p = t.pricing;
 

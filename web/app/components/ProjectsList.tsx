@@ -38,7 +38,7 @@ const POLL_MS = 5000;
  * перестаёт дёргать сервер. Из-за отсутствия такой страницы было непонятно,
  * что именно висит в работе, когда лимит запрещал запускать новое.
  */
-export function ProjectsList({ lang, email }: { lang: Lang; email: string | null }) {
+export function ProjectsList({ lang, email }: { lang: Lang; email?: string | null }) {
   const s = studio[lang];
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
