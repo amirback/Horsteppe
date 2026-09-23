@@ -1,7 +1,20 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
+import { pageMetadata } from "../../lib/seo";
+import { studio } from "../../lib/studio-content";
 import { isLang } from "../../lib/i18n";
 import { LoginForm } from "./form";
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}): Promise<Metadata> {
+  const { lang } = await params;
+  if (!isLang(lang)) return {};
+  return pageMetadata(lang, "/login", { title: studio[lang].auth.signIn, index: false });
+}
 
 export default async function LoginPage({
   params,
