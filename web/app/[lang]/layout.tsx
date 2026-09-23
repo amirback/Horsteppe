@@ -3,6 +3,7 @@ import { Montserrat, Inter } from "next/font/google";
 import { notFound } from "next/navigation";
 import "../globals.css";
 import { LOCALES, LOCALE_META, SITE_URL, isLang, type Lang } from "../lib/i18n";
+import { MotionProvider } from "../components/MotionProvider";
 
 const montserrat = Montserrat({
   subsets: ["latin", "cyrillic"],
@@ -100,7 +101,16 @@ export default async function LocaleLayout({
 
   return (
     <html lang={LOCALE_META[lang].htmlLang} className={`${montserrat.variable} ${inter.variable}`}>
-      <body className="min-h-screen bg-paper text-ink antialiased">{children}</body>
+      <body className="min-h-screen bg-paper text-ink antialiased">
+        {/* Если скрипты не выполнились вовсе — блокировщик, старый браузер,
+            оборванная загрузка, — блоки с анимацией появления остались бы
+            прозрачными навсегда: они ждут JavaScript, чтобы проявиться.
+            Правило действует только когда скрипты выключены. */}
+        <noscript>
+          <style>{`[style*="opacity:0"]{opacity:1!important;transform:none!important}`}</style>
+        </noscript>
+        <MotionProvider>{children}</MotionProvider>
+      </body>
     </html>
   );
 }
