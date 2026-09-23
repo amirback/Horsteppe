@@ -9,6 +9,23 @@ import { studio } from "../../lib/studio-content";
 import { Logo } from "../../components/ui";
 import { Ambience } from "../../components/Ambience";
 
+/**
+ * Куда вернуть человека после входа.
+ *
+ * Адрес приходит из строки запроса, то есть его может подставить кто угодно.
+ * Принимается только путь внутри сайта на том же языке; «//чужой.сайт» и
+ * «/en\\@чужой.сайт» браузер понял бы как переход на другой домен.
+ */
+function safeNext(next: string | null, lang: Lang): string {
+  const home = `/${lang}`;
+  if (!next) return home;
+  if (next !== home && !next.startsWith(`${home}/`) && !next.startsWith(`${home}?`) && !next.startsWith(`${home}#`)) {
+    return home;
+  }
+  if (next.includes("//") || next.includes("\\")) return home;
+  return next;
+}
+
 /** Вход и регистрация. Аккаунт нужен, чтобы лимиты защищали бюджет генерации. */
 export function LoginForm({ lang }: { lang: Lang }) {
   const s = studio[lang].auth;
@@ -19,14 +36,16 @@ export function LoginForm({ lang }: { lang: Lang }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (busy) return;
     setError(null);
-    setInfo(null);
     setBusy(true);
+    // Кнопка отпускается только при неудаче. После успешного входа идёт
+    // переход, и отпущенная кнопка давала нажать её второй раз.
+    let leaving = false;
     try {
       const supabase = createClient();
       if (mode === "signup") {
@@ -49,13 +68,13 @@ export function LoginForm({ lang }: { lang: Lang }) {
         setError(mode === "signup" ? errors.signup_failed : errors.bad_credentials);
         return;
       }
-      const next = search.get("next");
-      router.push(next && next.startsWith(`/${lang}`) ? next : `/${lang}`);
+      leaving = true;
+      router.push(safeNext(search.get("next"), lang));
       router.refresh();
     } catch {
       setError(errors.network);
     } finally {
-      setBusy(false);
+      if (!leaving) setBusy(false);
     }
   }
 
@@ -98,7 +117,11 @@ export function LoginForm({ lang }: { lang: Lang }) {
                 id="password"
                 type="password"
                 required
-                minLength={6}
+                // Минимум действует только на регистрации: у прежних
+                // аккаунтов пароли по шесть символов, и форма не должна
+                // запрещать им входить.
+                minLength={mode === "signup" ? 8 : undefined}
+                maxLength={72}
                 autoComplete={mode === "signin" ? "current-password" : "new-password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -109,11 +132,6 @@ export function LoginForm({ lang }: { lang: Lang }) {
             {error ? (
               <p role="alert" className="rounded-2xl border border-ember/40 bg-white/60 px-4 py-3 text-[13.5px] text-ember">
                 {error}
-              </p>
-            ) : null}
-            {info ? (
-              <p className="rounded-2xl border border-ink/15 bg-white/60 px-4 py-3 text-[13.5px] text-ink-soft">
-                {info}
               </p>
             ) : null}
 
