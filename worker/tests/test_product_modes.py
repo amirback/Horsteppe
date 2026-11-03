@@ -256,6 +256,8 @@ class TestAnimatePhoto(ModeSetup, unittest.TestCase):
 
     def test_requested_length_is_covered_by_real_clips(self) -> None:
         self.assertEqual(pipeline.real_video_coverage(self.db.shots), 1.0)
+        self.assertEqual(self.db.project["real_video_coverage"], 1.0, "покрытие показывается рядом с плеером")
+        self.assertIsNone(self.db.project["degraded_reason"])
 
     def test_duration_matches_the_request(self) -> None:
         final = Path(self.db.renders[-1][0].replace("file://", ""))
@@ -265,6 +267,66 @@ class TestAnimatePhoto(ModeSetup, unittest.TestCase):
         """Немой файл часть плееров считает битым — тишина честнее отсутствия дорожки."""
         final = Path(self.db.renders[-1][0].replace("file://", ""))
         self.assertTrue(media.validate_final(final, SIZE)["has_audio"])
+
+
+class AnimateWithoutRealVideo(ModeSetup):
+    """Режим B, когда настоящего видео не вышло. Ролик есть, но «Готово» без
+    оговорки было бы ложью: человек просил движение, а получил зум по снимку
+    (ТЗ §32). Раньше здесь всегда ставилось «Готово»."""
+
+    safe_mode = "0"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.prepare()
+        os.environ["MVP_SAFE_MODE"] = cls.safe_mode
+        from config import Config
+        from steps import video_step
+
+        cls.asked: list[str] = []
+
+        def refused(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None, provider=None):
+            cls.asked.append(image_url)
+            raise video_step.VideoError("Higgsfield отказал — HTTP 503: overloaded")
+
+        video_step.generate_clip = refused
+        reference = cls.reference_row(f"animate_{cls.__name__}.png")
+        project_id = str(uuid.uuid4())
+        cls.db = ReferenceDb(cls.storage, {
+            "id": project_id, "topic": "камера медленно приближается к лицу",
+            "style": "cinematic", "duration_sec": 10, "aspect_ratio": "9:16",
+            "status": "queued", "project_type": "image_to_video",
+        }, [reference])
+        pipeline.run_project(Config(), cls.db, project_id)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.restore()
+
+    def test_the_video_is_still_delivered(self) -> None:
+        self.assertTrue(self.db.renders)
+
+    def test_the_result_is_marked_with_a_caveat(self) -> None:
+        self.assertEqual(self.db.project["status"], "done_degraded")
+        self.assertEqual(self.db.project["status_detail"], "Готово с оговоркой")
+        self.assertEqual(self.db.project["real_video_coverage"], 0.0)
+
+
+class TestAnimateRefusedByProvider(AnimateWithoutRealVideo, unittest.TestCase):
+    def test_the_reason_names_the_provider(self) -> None:
+        self.assertTrue(self.asked, "провайдера спрашивали")
+        self.assertEqual(self.db.project["degraded_reason"], "Провайдер видео ответил отказом на часть кадров.")
+
+
+class TestAnimateInSafeMode(AnimateWithoutRealVideo, unittest.TestCase):
+    safe_mode = "1"
+
+    def test_the_reason_says_real_video_was_off(self) -> None:
+        self.assertEqual(self.asked, [], "в безопасном режиме провайдера не зовут")
+        self.assertEqual(
+            self.db.project["degraded_reason"],
+            "Настоящее видео отключено в этом режиме — движение сделано камерой по кадру.",
+        )
 
 
 if __name__ == "__main__":

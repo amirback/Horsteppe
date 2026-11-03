@@ -257,6 +257,8 @@ def _store_clip(db: Db, guard, project_id: str, shot: dict, index: int, done, cl
 # Сколько секунд отдаёт провайдер за один вызов image-to-video. Из этого
 # числа складывается длина ролика в режиме «оживить фотографию».
 PROVIDER_CLIP_SEC = 5.0
+# В этом режиме обещано настоящее движение на всю длину ролика.
+ANIMATE_COVERAGE_TARGET = 1.0
 
 
 def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir, guard) -> None:
@@ -354,8 +356,20 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
     db.set_progress(project_id, "Загрузка результата…")
     final_url = db.upload(f"projects/{project_id}/final.mp4", final_path.read_bytes(), "video/mp4")
     db.insert_render(project_id, final_url, check["duration_sec"])
-    db.update_project(project_id, status="done", status_detail="Готово", error_message=None)
+    # Человек просил оживить снимок, то есть движение целиком: зум по
+    # фотографии — не оно. Ниже цели — «Готово с оговоркой» и причина рядом с
+    # плеером, как у обычного ролика (ТЗ §32). Раньше здесь всегда стояло
+    # «Готово»: и когда все клипы упали, и когда платный путь был закрыт.
     coverage = real_video_coverage(shots)
+    reason = _degraded_reason(cfg, shots, coverage, ANIMATE_COVERAGE_TARGET)
+    db.update_project(
+        project_id,
+        status="done_degraded" if reason else "done",
+        status_detail="Готово с оговоркой" if reason else "Готово",
+        error_message=None,
+        real_video_coverage=coverage,
+        degraded_reason=reason,
+    )
     log.info("[%s] FINAL: %.2f с, клипов %d, настоящее видео %.0f%%",
              project_id[:8], check["duration_sec"], len(shots), coverage * 100)
 
