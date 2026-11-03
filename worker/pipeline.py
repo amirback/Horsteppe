@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -116,6 +117,142 @@ def real_video_coverage(shots: list[dict]) -> float:
     return round(real / total, 4)
 
 
+# ------------------------------------------------ настоящий клип для кадра --
+
+def _pending_request(shot: dict):
+    """Задача провайдера из прошлого запуска, результат которой не забран."""
+    if not shot.get("provider_request_id") or shot.get("video_url"):
+        return None
+    return video_step.ProviderRequest(
+        provider=shot.get("provider") or "higgsfield",
+        model=shot.get("model") or "",
+        request_id=str(shot["provider_request_id"]),
+        status_url=shot.get("provider_status_url") or "",
+        status=shot.get("provider_status") or "queued",
+        cost_usd=float(shot.get("actual_cost_usd") or 0.0),
+    )
+
+
+def _clip_tracking(db: Db, guard, project_id: str, shot: dict, index: int):
+    """Журнал задачи одного кадра.
+
+    Трата пишется в миг, когда провайдер принял задачу, — до ожидания: деньги
+    ушли тогда, а не когда клип скачался. Номер задачи пишется следом, и
+    порядок важен: если запись номера сорвётся, трата уже в журнале и журнал
+    не отстаёт от кошелька.
+    """
+    def accepted(request) -> bool:
+        db.log_cost(project_id, "video", request.provider, request.cost_usd,
+                    f"shot {index} · {request.request_id}")
+        guard.record(request.cost_usd, f"видео кадра {index}")
+        try:
+            db.update_shot(shot["id"], provider=request.provider, model=request.model,
+                           actual_cost_usd=request.cost_usd)
+            db.remember_provider_request(
+                shot["id"], provider_request_id=request.request_id,
+                provider_status=request.status, provider_status_url=request.status_url,
+                provider_submitted_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except Exception as e:  # noqa: BLE001 — забрать клип важнее, чем записать номер
+            log.warning("[%s] кадр %d: номер задачи %s не сохранён: %s",
+                        project_id[:8], index, request.request_id, e)
+        shot.update(provider=request.provider, model=request.model,
+                    provider_request_id=request.request_id, actual_cost_usd=request.cost_usd)
+        return True
+
+    def status(request, state: str) -> None:
+        db.remember_provider_request(shot["id"], provider_status=state)
+        db.heartbeat(project_id)
+
+    return video_step.tracking(on_accepted=accepted, on_status=status)
+
+
+def _forget_request(db: Db, shot: dict, error: Exception | None = None) -> None:
+    """Номер задачи остаётся у кадра, только пока у провайдера есть что забрать."""
+    if not shot.get("provider_request_id") or getattr(error, "retrievable", False):
+        return
+    try:
+        db.remember_provider_request(shot["id"], provider_request_id=None)
+    except Exception as e:  # noqa: BLE001
+        log.warning("кадр %s: номер задачи не снят: %s", str(shot.get("id"))[:8], e)
+    shot["provider_request_id"] = None
+
+
+def _real_clip(cfg: Config, db: Db, guard, project_id: str, shot: dict, index: int,
+               clip_path: Path, *, image_url: str, prompt: str, choose):
+    """Настоящий клип для кадра: забрать уже оплаченный или заказать новый.
+
+    Задача прошлого запуска идёт первой — она оплачена, и заказ того же кадра
+    снова значил бы платить дважды. Новый заказ — только когда забирать от неё
+    нечего. Возвращает ClipResult или None; причина неудачи записана в кадр.
+    """
+    pending = _pending_request(shot)
+    if pending is not None:
+        try:
+            with _clip_tracking(db, guard, project_id, shot, index):
+                return video_step.resume_clip(cfg, pending, clip_path)
+        except (video_step.VideoError, safe_mode.PaidCallBlocked) as e:
+            log.warning("[%s] кадр %d: прошлая задача %s клип не отдала: %s",
+                        project_id[:8], index, pending.request_id, e)
+            db.update_shot(shot["id"], failure_reason=str(e)[:500])
+            _forget_request(db, shot, e)
+            if getattr(e, "retrievable", False) or isinstance(
+                e, (video_step.ContentRejected, safe_mode.PaidCallBlocked)
+            ):
+                return None
+
+    choice, reason = choose()
+    if choice is None:
+        # Отказ до вызова — лучший вид отказа: ни задержки, ни денег. Но причину
+        # обязан увидеть человек, иначе кадр молча остаётся фотографией.
+        log.info("[%s] кадр %d без настоящего видео: %s", project_id[:8], index, reason)
+        db.update_shot(shot["id"], failure_reason=(reason or "")[:500])
+        return None
+    try:
+        with _clip_tracking(db, guard, project_id, shot, index):
+            done = video_step.generate_clip(
+                cfg, image_url, prompt, clip_path,
+                provider=choice.provider, model=choice.model, cost_usd=choice.cost_usd,
+            )
+    except (video_step.VideoError, budget.BudgetExceeded) as e:
+        # Падение провайдера и конец денег кончаются одинаково: кадр остаётся
+        # движением по картинке, остальные идут дальше, причина записывается.
+        log.warning("[%s] кадр %d без настоящего видео: %s", project_id[:8], index, e)
+        db.update_shot(shot["id"], failure_reason=str(e)[:500])
+        _forget_request(db, shot, e)
+        if isinstance(e, video_step.AcceptedButNotDelivered) and not e.recorded:
+            # Задачу приняли, а журнал о ней не узнал: деньги всё равно ушли.
+            db.log_cost(project_id, "video", e.request.provider, e.request.cost_usd,
+                        f"shot {index} · {e.request.request_id} · не получен")
+            guard.record(e.request.cost_usd, f"видео кадра {index} (не получено)")
+        return None
+    # Записываем того, кто ДЕЙСТВИТЕЛЬНО сделал клип: цепочка могла уйти к
+    # запасному провайдеру, и в базе не должно остаться чужого имени.
+    if done.provider != choice.provider or done.model != choice.model:
+        log.info("[%s] кадр %d: маршрутизатор предлагал %s/%s, клип сделал %s/%s",
+                 project_id[:8], index, choice.provider, choice.model, done.provider, done.model)
+    return done
+
+
+def _store_clip(db: Db, guard, project_id: str, shot: dict, index: int, done, clip_path: Path) -> None:
+    """Учесть (если ещё не учтено), загрузить и записать настоящий клип кадра.
+
+    Трата пишется до загрузки: раньше запись стояла после, и один обрыв связи
+    ронял проект с уже оплаченными клипами, которых не было в журнале.
+    Только здесь кадр становится настоящим видео — движение по картинке
+    засчитывать в real_video нельзя.
+    """
+    if not done.recorded:
+        db.log_cost(project_id, "video", done.provider, done.cost_usd, f"shot {index}")
+        guard.record(done.cost_usd, f"видео кадра {index}")
+    url = db.upload(f"projects/{project_id}/shot_{index:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
+    db.update_shot(
+        shot["id"], video_url=url, status="video_done",
+        generation_mode="real_video", actual_cost_usd=done.cost_usd,
+        provider=done.provider, model=done.model,
+    )
+    shot.update(video_url=url, generation_mode="real_video", provider=done.provider, model=done.model)
+
 
 # Сколько секунд отдаёт провайдер за один вызов image-to-video. Из этого
 # числа складывается длина ролика в режиме «оживить фотографию».
@@ -175,40 +312,18 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
                 continue
             db.set_progress(project_id, f"Оживляем фотографию: {i + 1}/{total}")
             clip_path = work_dir / f"shot_{i:02d}_clip.mp4"
-            choice = providers.choose(
-                "video", importance=1.0, shot_label=f"клип {i + 1}",
-                needs_image_to_video=True, needs_reference=True, aspect=aspect,
-                affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
-            )
-            if choice is None:
-                reason = providers.why_not(
-                    "video",
-                    affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
-                    needs_image_to_video=True, needs_reference=True, aspect=aspect,
-                )
-                log.info("[%s] клип %d не будет сделан: %s", project_id[:8], i, reason)
-                db.update_shot(shot["id"], failure_reason=reason[:500])
-                continue
-            try:
-                done = video_step.generate_clip(
-                    cfg, reference["public_url"], motion, clip_path,
-                    provider=choice.provider, model=choice.model, cost_usd=choice.cost_usd,
-                )
-            except (video_step.VideoError, budget.BudgetExceeded) as e:
-                log.warning("[%s] клип %d не получился: %s", project_id[:8], i, e)
-                db.update_shot(shot["id"], failure_reason=str(e)[:500])
-                continue
-            # Трата записывается сразу, до загрузки. Деньги ушли в тот миг,
-            # когда провайдер ответил, и журнал обязан это знать даже если
-            # всё дальнейшее сорвётся: иначе потолок держится на цифре,
-            # которая меньше настоящей.
-            db.log_cost(project_id, "video", done.provider, done.cost_usd, f"shot {i}")
-            guard.record(done.cost_usd, f"клип {i}")
-            url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
-            db.update_shot(shot["id"], video_url=url, status="video_done",
-                           generation_mode="real_video", actual_cost_usd=done.cost_usd,
-                           provider=done.provider, model=done.model)
-            shot.update(video_url=url, generation_mode="real_video")
+
+            def choose(i=i):
+                affordable = guard.spendable_usd if guard.has_ceiling else None
+                filters = dict(needs_image_to_video=True, needs_reference=True, aspect=aspect)
+                choice = providers.choose("video", importance=1.0, shot_label=f"клип {i + 1}",
+                                          affordable_usd=affordable, **filters)
+                return choice, None if choice else providers.why_not("video", affordable_usd=affordable, **filters)
+
+            done = _real_clip(cfg, db, guard, project_id, shot, i, clip_path,
+                              image_url=reference["public_url"], prompt=motion, choose=choose)
+            if done is not None:
+                _store_clip(db, guard, project_id, shot, i, done, clip_path)
     else:
         log.info("[%s] платное видео закрыто: фотография получит движение камеры", project_id[:8])
 
@@ -499,6 +614,8 @@ def _repair_shots(db: Db, shots: list[dict], report, project_id: str) -> int:
                     failure_reason=f"клип замер на {issue.at_sec or 0:.1f} с, заменён движением камеры",
                 )
                 shot.update(video_url=None, generation_mode="image_motion")
+                # Иначе повтор проекта забрал бы у провайдера тот же замерший клип.
+                _forget_request(db, shot)
             else:
                 new_motion = _fresh_motion(shots, shot)
                 db.update_shot(
@@ -720,80 +837,38 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
         # движение по картинке в одиночку, и это записывается в лог.
         if safe_mode.is_paid_video_allowed(cfg):
             for i, shot in enumerate(shots):
-                if shot.get("video_url") or not _wants_real_video(shot):
+                if shot.get("video_url"):
+                    continue
+                # Оплаченная задача прошлого запуска забирается всегда — даже
+                # если план кадра с тех пор изменился: деньги уже ушли.
+                if _pending_request(shot) is None and not _wants_real_video(shot):
                     continue
                 db.set_progress(
                     project_id, f"Видео: кадр {i + 1}/{shot_total} (может занять несколько минут)"
                 )
                 clip_path = work_dir / f"shot_{i:02d}_clip.mp4"
+
                 # Модель выбирается на кадр: крючку и кадру товара достаётся
                 # лучшее, фону — дешёвое. Остаток бюджета участвует в отсечке,
                 # поэтому дорогая модель просто не попадёт в кандидаты, когда
                 # денег на неё нет.
-                choice = providers.choose(
-                    "video",
-                    importance=float(shot.get("visual_importance") or 0.5),
-                    shot_label=f"кадр {i + 1}",
-                    needs_image_to_video=True,
-                    needs_reference=bool(shot.get("first_frame_reference")),
-                    aspect=aspect_hint,
-                    affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
+                def choose(shot=shot, i=i):
+                    affordable = guard.spendable_usd if guard.has_ceiling else None
+                    filters = dict(needs_image_to_video=True, aspect=aspect_hint,
+                                   needs_reference=bool(shot.get("first_frame_reference")))
+                    choice = providers.choose(
+                        "video", importance=float(shot.get("visual_importance") or 0.5),
+                        shot_label=f"кадр {i + 1}", affordable_usd=affordable, **filters,
+                    )
+                    return choice, None if choice else providers.why_not("video", affordable_usd=affordable, **filters)
+
+                done = _real_clip(
+                    cfg, db, guard, project_id, shot, i, clip_path,
+                    image_url=shot["image_url"],
+                    prompt=shot.get("video_prompt") or shot["visual_prompt"], choose=choose,
                 )
-                if choice is None:
-                    # Отказ до вызова — лучший вид отказа: ни задержки, ни
-                    # денег. Но причину обязан увидеть человек, иначе кадр
-                    # молча остаётся фотографией.
-                    reason = providers.why_not(
-                        "video",
-                        affordable_usd=guard.spendable_usd if guard.has_ceiling else None,
-                        needs_image_to_video=True,
-                        needs_reference=bool(shot.get("first_frame_reference")),
-                        aspect=aspect_hint,
-                    )
-                    log.info("[%s] кадр %d без настоящего видео: %s", project_id[:8], i, reason)
-                    db.update_shot(shot["id"], failure_reason=reason[:500])
-                    continue
-                try:
-                    done = video_step.generate_clip(
-                        cfg, shot["image_url"],
-                        shot.get("video_prompt") or shot["visual_prompt"], clip_path,
-                        provider=choice.provider, model=choice.model, cost_usd=choice.cost_usd,
-                    )
-                except (video_step.VideoError, budget.BudgetExceeded) as e:
-                    # Падение провайдера и конец денег кончаются одинаково:
-                    # кадр остаётся движением по картинке, остальные идут
-                    # дальше, причина записывается. Проект из-за одного кадра
-                    # не падает — но и покрытие не приписывается.
-                    log.warning("[%s] кадр %d без настоящего видео: %s", project_id[:8], i, e)
-                    db.update_shot(shot["id"], failure_reason=str(e)[:500])
-                    continue
-                # Трата записывается до загрузки: деньги ушли в тот миг, когда
-                # провайдер ответил. Раньше запись стояла после загрузки, и
-                # один обрыв связи ронял проект с уже оплаченными клипами,
-                # которых не было в журнале — повтор платил за них снова.
-                #
-                # Записываем того, кто ДЕЙСТВИТЕЛЬНО сделал клип, а не того,
-                # кого предложил маршрутизатор. Маршрутизатор знает только
-                # модели fal, а цепочка отдаёт кадр первому доступному
-                # провайдеру — и в базе оставалась ложь про «fal v2.1 pro»
-                # там, где работал Higgsfield моделью v2.5-turbo.
-                if done.provider != choice.provider or done.model != choice.model:
-                    log.info(
-                        "[%s] кадр %d: маршрутизатор предлагал %s/%s, клип сделал %s/%s",
-                        project_id[:8], i, choice.provider, choice.model,
-                        done.provider, done.model,
-                    )
-                db.log_cost(project_id, "video", done.provider, done.cost_usd, f"shot {i}")
-                guard.record(done.cost_usd, f"видео кадра {i}")
-                url = db.upload(f"projects/{project_id}/shot_{i:02d}/clip.mp4", clip_path.read_bytes(), "video/mp4")
-                # Только здесь кадр становится настоящим видео: движение по
-                # картинке засчитывать в real_video нельзя.
-                db.update_shot(
-                    shot["id"], video_url=url, status="video_done",
-                    generation_mode="real_video", actual_cost_usd=done.cost_usd,
-                    provider=done.provider, model=done.model,
-                )
-                shot.update(video_url=url, generation_mode="real_video")
+                if done is not None:
+                    _store_clip(db, guard, project_id, shot, i, done, clip_path)
 
         # ---- 6. Render: make sure all assets are local (retries may start cold)
         db.set_progress(project_id, "Монтаж…")

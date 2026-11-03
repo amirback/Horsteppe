@@ -66,6 +66,7 @@ class FakeDb:
         self.progress: list[str] = []
         self.costs: list[tuple[str, str, float]] = []
         self.renders: list[tuple[str, float]] = []
+        self.heartbeats = 0
 
     # --- проект ---
     def get_project(self, project_id: str) -> dict[str, Any]:
@@ -108,6 +109,14 @@ class FakeDb:
                 shot.update(fields)
                 return
         raise AssertionError(f"кадр {shot_id} не найден")
+
+    # --- задача у провайдера (миграция 0006) ---
+    def remember_provider_request(self, shot_id: str, **fields: Any) -> bool:
+        self.update_shot(shot_id, **fields)
+        return True
+
+    def heartbeat(self, project_id: str) -> None:
+        self.heartbeats += 1
 
     # --- побочные записи ---
     def log_cost(self, project_id: str, step: str, provider: str, amount_usd: float, detail: str = "") -> None:
