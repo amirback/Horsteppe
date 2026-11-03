@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type { Lang } from "../../../lib/i18n";
 import { studio } from "../../../lib/studio-content";
+import {
+  FEEDBACK_REASONS, modelLabel, providerLabel, type Rating, type Reason, type VideoSource,
+} from "../../../lib/feedback";
 import { usePolling, type PollOutcome } from "../../../lib/use-polling";
 import { degradedText, failureText, progressText } from "../../../lib/worker-text";
 import { seconds } from "../../../lib/format";
@@ -37,6 +40,8 @@ type Data = {
   };
   scenes: Scene[];
   render: { final_video_url: string; duration_sec: number | null } | null;
+  /** Кто сделал настоящие клипы — по записям в базе, а не по настройке. */
+  video_sources?: VideoSource[];
 };
 
 const POLL_MS = 3000;
@@ -171,6 +176,15 @@ export function ProjectStatus({
               </p>
             ) : null}
 
+            {done && data?.video_sources?.length ? (
+              <p className="mt-1 text-[12.5px] text-ink-soft/70">
+                {s.project.madeWith}:{" "}
+                {data.video_sources
+                  .map((v) => `${providerLabel(v.provider)} · ${modelLabel(v.model)} — ${s.project.shots(v.shots)}`)
+                  .join(", ")}
+              </p>
+            ) : null}
+
             {done ? (
               <motion.div
                 initial={{ opacity: 0, y: 16 }}
@@ -208,6 +222,7 @@ export function ProjectStatus({
                     </span>
                   ) : null}
                 </div>
+                <FeedbackBlock lang={lang} projectId={project.id} />
               </motion.div>
             ) : failed ? (
               <div className="mt-8 max-w-2xl rounded-2xl border border-ember/40 bg-white/60 px-5 py-4">
@@ -247,6 +262,174 @@ export function ProjectStatus({
 
       <Footer lang={lang} />
     </>
+  );
+}
+
+type Saved = { rating: Rating; reasons: Reason[]; comment: string | null };
+
+/**
+ * Оценка готового ролика: «Хороший результат» или «Нужно улучшить» с
+ * причинами и необязательным комментарием (ТЗ V1, Phase 4).
+ *
+ * Если оценка недоступна — например, миграция базы ещё не применена, —
+ * блок не показывается вовсе: кнопка, которая заведомо не сработает, хуже,
+ * чем её отсутствие.
+ */
+function FeedbackBlock({ lang, projectId }: { lang: Lang; projectId: string }) {
+  const s = studio[lang];
+  const f = s.project.feedback;
+  const [mode, setMode] = useState<"loading" | "hidden" | "asking" | "saved">("loading");
+  const [rating, setRating] = useState<Rating | null>(null);
+  const [reasons, setReasons] = useState<Reason[]>([]);
+  const [comment, setComment] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/projects/${projectId}/feedback`, { cache: "no-store" })
+      .then(async (res) => {
+        if (!alive) return;
+        if (!res.ok) return setMode("hidden");
+        const body: { feedback: Saved | null } = await res.json();
+        if (body.feedback) {
+          setRating(body.feedback.rating);
+          setReasons(body.feedback.reasons ?? []);
+          setComment(body.feedback.comment ?? "");
+          setMode("saved");
+        } else {
+          setMode("asking");
+        }
+      })
+      .catch(() => alive && setMode("hidden"));
+    return () => {
+      alive = false;
+    };
+  }, [projectId]);
+
+  const send = useCallback(
+    async (chosen: Rating) => {
+      if (saving) return;
+      setSaving(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/projects/${projectId}/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rating: chosen,
+            reasons: chosen === "good" ? [] : reasons,
+            comment: comment.trim() || null,
+          }),
+        });
+        if (!res.ok) {
+          const body: { error?: string } = await res.json().catch(() => ({}));
+          setError(s.errors[body.error ?? "unknown"] ?? s.errors.unknown);
+          return;
+        }
+        setRating(chosen);
+        setMode("saved");
+      } catch {
+        setError(s.errors.network);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [projectId, reasons, comment, saving, s]
+  );
+
+  if (mode === "loading" || mode === "hidden") return null;
+
+  if (mode === "saved") {
+    return (
+      <div className="mt-8 max-w-2xl rounded-2xl border border-ink/12 bg-white/55 px-5 py-4">
+        <p className="text-[14px] leading-relaxed text-ink-soft/85">
+          <span className="font-semibold text-ink">{rating === "good" ? f.good : f.bad}.</span> {f.saved}
+        </p>
+        <button
+          type="button"
+          onClick={() => setMode("asking")}
+          className="mt-2 text-[13px] text-ink-soft/70 underline underline-offset-4 hover:text-ink"
+        >
+          {f.change}
+        </button>
+      </div>
+    );
+  }
+
+  const toggle = (reason: Reason) =>
+    setReasons((current) =>
+      current.includes(reason) ? current.filter((r) => r !== reason) : [...current, reason]
+    );
+  const chip = (active: boolean) =>
+    [
+      "rounded-full border-[1.5px] px-4 py-2 text-[13.5px] transition disabled:opacity-60",
+      active ? "border-ink bg-ink text-cream" : "border-ink/20 text-ink-soft hover:border-ink hover:text-ink",
+    ].join(" ");
+
+  return (
+    <div className="mt-8 max-w-2xl rounded-2xl border border-ink/12 bg-white/55 px-5 py-4">
+      <p className="text-[15px] font-semibold text-ink">{f.title}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" disabled={saving} aria-pressed={false} onClick={() => send("good")} className={chip(false)}>
+          {f.good}
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          aria-pressed={rating === "needs_improvement"}
+          onClick={() => setRating("needs_improvement")}
+          className={chip(rating === "needs_improvement")}
+        >
+          {f.bad}
+        </button>
+      </div>
+
+      {rating === "needs_improvement" ? (
+        <div className="mt-4">
+          <p className="text-[13.5px] text-ink-soft/80">{f.reasonsTitle}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {FEEDBACK_REASONS.map((reason) => (
+              <button
+                key={reason}
+                type="button"
+                disabled={saving}
+                aria-pressed={reasons.includes(reason)}
+                onClick={() => toggle(reason)}
+                className={chip(reasons.includes(reason))}
+              >
+                {f.reasons[reason] ?? reason}
+              </button>
+            ))}
+          </div>
+          <label className="mt-4 block text-[13px] text-ink-soft/70">
+            {f.comment}
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              maxLength={1000}
+              rows={3}
+              disabled={saving}
+              className="mt-1 w-full rounded-2xl border border-ink/15 bg-white/70 px-4 py-3 text-[14px] text-ink outline-none focus:border-ink"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={saving || reasons.length === 0}
+            onClick={() => send("needs_improvement")}
+            className="nav-link mt-3 inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-cream transition hover:bg-forest disabled:opacity-60"
+          >
+            {saving ? f.saving : f.send}
+          </button>
+        </div>
+      ) : null}
+
+      {error ? (
+        <p role="alert" className="mt-3 text-[13.5px] text-ember">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

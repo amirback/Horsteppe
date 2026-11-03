@@ -64,6 +64,22 @@ export type StudioDict = {
     /** Доля ролика, закрытая настоящим AI-видео. Не выдумка, а измерение. */
     realMotion: string;
     stages: string[];
+    /** Кто на самом деле сделал настоящие клипы: смена провайдера не бывает тихой. */
+    madeWith: string;
+    shots: (n: number) => string;
+    /** Оценка результата (ТЗ V1, Phase 4). Сбор данных для выбора моделей, не обучение. */
+    feedback: {
+      title: string;
+      good: string;
+      bad: string;
+      reasonsTitle: string;
+      reasons: Record<string, string>;
+      comment: string;
+      send: string;
+      saving: string;
+      saved: string;
+      change: string;
+    };
   };
 };
 
@@ -145,6 +161,10 @@ export const studio: Record<Lang, StudioDict> = {
       signup_failed: "Could not create the account. Try again.",
       bad_credentials: "Wrong email or password.",
       retry_not_failed: "This project is not in a failed state — nothing to retry.",
+      feedback_unavailable: "Rating is temporarily unavailable.",
+      invalid_feedback: "Mark what to improve — at least one reason.",
+      feedback_not_ready: "You can rate the video once it is ready.",
+      feedback_save_failed: "Could not save the rating. Try again.",
       unknown: "Something went wrong.",
     },
     auth: {
@@ -190,6 +210,28 @@ export const studio: Record<Lang, StudioDict> = {
         "Editing",
         "Rendering the final video",
       ],
+      madeWith: "Real video",
+      shots: (n) => (n === 1 ? "1 shot" : `${n} shots`),
+      feedback: {
+        title: "How did it turn out?",
+        good: "Good result",
+        bad: "Needs improvement",
+        reasonsTitle: "What should be better?",
+        reasons: {
+          off_prompt: "Not what I asked for",
+          visuals: "Image quality",
+          motion: "Unnatural motion",
+          sound: "Voice or sound",
+          text: "Subtitles or text",
+          length: "Length",
+          other: "Something else",
+        },
+        comment: "Comment (optional)",
+        send: "Send",
+        saving: "Saving…",
+        saved: "Thank you — your rating is saved. It helps us choose better models.",
+        change: "Change rating",
+      },
     },
   },
 
@@ -270,6 +312,10 @@ export const studio: Record<Lang, StudioDict> = {
       signup_failed: "Не удалось создать аккаунт. Попробуйте ещё раз.",
       bad_credentials: "Неверная почта или пароль.",
       retry_not_failed: "Этот проект не в состоянии ошибки — повторять нечего.",
+      feedback_unavailable: "Оценка временно недоступна.",
+      invalid_feedback: "Отметьте, что улучшить, — хотя бы одну причину.",
+      feedback_not_ready: "Оценить можно, когда ролик готов.",
+      feedback_save_failed: "Не удалось сохранить оценку. Попробуйте ещё раз.",
       unknown: "Что-то пошло не так.",
     },
     auth: {
@@ -315,6 +361,33 @@ export const studio: Record<Lang, StudioDict> = {
         "Монтируем",
         "Рендерим финальное видео",
       ],
+      madeWith: "Настоящее видео",
+      shots: (n) => {
+        const tail = n % 100;
+        const last = n % 10;
+        const word = tail >= 11 && tail <= 14 ? "кадров" : last === 1 ? "кадр" : last >= 2 && last <= 4 ? "кадра" : "кадров";
+        return `${n} ${word}`;
+      },
+      feedback: {
+        title: "Как вам результат?",
+        good: "Хороший результат",
+        bad: "Нужно улучшить",
+        reasonsTitle: "Что стоит улучшить?",
+        reasons: {
+          off_prompt: "Не то, что я просил",
+          visuals: "Качество картинки",
+          motion: "Неестественное движение",
+          sound: "Голос или звук",
+          text: "Субтитры или надписи",
+          length: "Длительность",
+          other: "Другое",
+        },
+        comment: "Комментарий (необязательно)",
+        send: "Отправить",
+        saving: "Сохраняем…",
+        saved: "Спасибо, оценка сохранена. Она помогает нам выбирать модели получше.",
+        change: "Изменить оценку",
+      },
     },
   },
 
@@ -395,6 +468,10 @@ export const studio: Record<Lang, StudioDict> = {
       signup_failed: "Аккаунт жасау мүмкін болмады. Қайталап көріңіз.",
       bad_credentials: "Пошта немесе құпиясөз қате.",
       retry_not_failed: "Бұл жоба қате күйінде емес — қайталайтын ештеңе жоқ.",
+      feedback_unavailable: "Бағалау уақытша қолжетімсіз.",
+      invalid_feedback: "Нені жақсарту керегін белгілеңіз — кемінде бір себеп.",
+      feedback_not_ready: "Ролик дайын болғанда бағалауға болады.",
+      feedback_save_failed: "Бағаны сақтау мүмкін болмады. Қайталап көріңіз.",
       unknown: "Бірдеңе дұрыс болмады.",
     },
     auth: {
@@ -440,6 +517,28 @@ export const studio: Record<Lang, StudioDict> = {
         "Монтаждаймыз",
         "Финалдық бейнені рендерлейміз",
       ],
+      madeWith: "Нақты бейне",
+      shots: (n) => `${n} кадр`,
+      feedback: {
+        title: "Нәтиже ұнады ма?",
+        good: "Жақсы нәтиже",
+        bad: "Жақсарту керек",
+        reasonsTitle: "Нені жақсарту керек?",
+        reasons: {
+          off_prompt: "Сұрағаным емес",
+          visuals: "Сурет сапасы",
+          motion: "Қозғалыс табиғи емес",
+          sound: "Дауыс немесе дыбыс",
+          text: "Субтитр немесе жазу",
+          length: "Ұзақтығы",
+          other: "Басқа",
+        },
+        comment: "Пікір (міндетті емес)",
+        send: "Жіберу",
+        saving: "Сақтап жатырмыз…",
+        saved: "Рақмет, бағаңыз сақталды. Ол жақсырақ модельдерді таңдауға көмектеседі.",
+        change: "Бағаны өзгерту",
+      },
     },
   },
 };

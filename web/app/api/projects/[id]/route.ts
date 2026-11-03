@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isBackendReady } from "@/lib/supabase/env";
 import { isUuid } from "@/lib/ids";
+import { summarizeSources } from "@/app/lib/feedback";
 
 /** Состояние проекта: сам проект, его сцены и готовый рендер, если он есть. */
 export async function GET(
@@ -35,7 +36,7 @@ export async function GET(
     return NextResponse.json({ error: "not_found" }, { status: 404 });
   }
 
-  const [{ data: scenes }, { data: renders }] = await Promise.all([
+  const [{ data: scenes }, { data: renders }, { data: shots }] = await Promise.all([
     supabase
       .from("scenes")
       .select("order_index, narration, status, image_url")
@@ -47,11 +48,15 @@ export async function GET(
       .eq("project_id", id)
       .order("created_at", { ascending: false })
       .limit(1),
+    // Кто на самом деле сделал настоящие клипы. ТЗ запрещает тихую смену
+    // провайдера: если кадр ушёл запасному, человек это увидит.
+    supabase.from("shots").select("provider, model, generation_mode").eq("project_id", id),
   ]);
 
   return NextResponse.json({
     project,
     scenes: scenes ?? [],
     render: renders?.[0] ?? null,
+    video_sources: summarizeSources(shots ?? []),
   });
 }
