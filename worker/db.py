@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from supabase import Client, create_client
@@ -26,6 +27,20 @@ REFERENCE_VIEW_TYPES = ("front", "side", "detail", "packaging", "lifestyle", "un
 # Потолок из ТЗ §7: больше пяти снимков товара не улучшают результат, но
 # умножают стоимость подготовки и шанс, что в кадр попадёт чужой ракурс.
 MAX_REFERENCES_PER_PROJECT = 5
+
+
+def is_missing_column(error: Exception) -> bool:
+    """Отказ базы из-за колонки, которой ещё нет (миграция не применена).
+
+    PostgREST отвечает кодом PGRST204, сам Postgres — 42703. Различать это с
+    прочими сбоями нужно, чтобы новый код работал и до миграции, а настоящая
+    ошибка базы не пряталась под тем же предлогом.
+    """
+    code = getattr(error, "code", None)
+    if code in ("PGRST204", "42703"):
+        return True
+    text = str(getattr(error, "message", None) or error).lower()
+    return "column" in text and ("schema cache" in text or "does not exist" in text)
 
 
 def primary_of(references: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -89,6 +104,22 @@ class Db:
     def set_progress(self, project_id: str, detail: str) -> None:
         log.info("[%s] %s", project_id[:8], detail)
         self.update_project(project_id, status="generating", status_detail=detail)
+        self.heartbeat(project_id)
+
+    def heartbeat(self, project_id: str) -> None:
+        """Освежить замок задачи: она жива, хотя и долгая.
+
+        Брошенной считается задача, чей замок старше 30 минут. Проект с
+        несколькими клипами по 3–15 минут легко живёт дольше, и второй
+        сборщик забирал живую задачу как брошенную — заказывая те же клипы
+        ещё раз. Пульс на каждом шаге держит замок свежим.
+        """
+        try:
+            self.client.table("jobs").update(
+                {"locked_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("project_id", project_id).eq("status", "processing").execute()
+        except Exception as e:  # noqa: BLE001 — пульс не важнее самой работы
+            log.warning("[%s] пульс задачи не обновлён: %s", project_id[:8], e)
 
     def get_scenes(self, project_id: str) -> list[dict[str, Any]]:
         res = (
@@ -128,6 +159,36 @@ class Db:
 
     def update_shot(self, shot_id: str, **fields: Any) -> None:
         self.client.table("shots").update(fields).eq("id", shot_id).execute()
+
+    # ---------- задача у провайдера (миграция 0006) ----------
+    # Номер задачи пишется в тот миг, когда провайдер её принял: после этого
+    # деньги уже потрачены, и повтор обязан забрать результат, а не заказать
+    # клип заново. До миграции колонок нет — тогда сборщик работает как
+    # раньше, без запоминания, и говорит об этом в логе один раз.
+
+    _provider_columns = True
+
+    def remember_provider_request(self, shot_id: str, **fields: Any) -> bool:
+        """Записать состояние задачи у провайдера. False — колонок ещё нет.
+
+        Поля только из миграции 0006 (provider_request_id, provider_status,
+        provider_status_url, provider_submitted_at): если смешать их с
+        прежними, отказ из-за новой колонки потерял бы и старые.
+        """
+        if not self._provider_columns:
+            return False
+        try:
+            self.update_shot(shot_id, **fields)
+        except Exception as e:  # noqa: BLE001 — разбор ниже
+            if not is_missing_column(e):
+                raise
+            self._provider_columns = False
+            log.warning(
+                "миграция 0006 не применена — номер задачи провайдера не сохраняется, "
+                "повтор после сбоя закажет клип заново: %s", e,
+            )
+            return False
+        return True
 
     # ---------- референсы ----------
     # Фотография, которую принёс пользователь: снимок товара или кадр для
