@@ -31,6 +31,16 @@ type Data = {
 
 const POLL_MS = 5000;
 
+type Filter = "all" | "active" | "done" | "failed";
+
+/** Ролик с оговоркой — готовый ролик: он играется и скачивается. */
+function matches(filter: Filter, status: Project["status"]): boolean {
+  if (filter === "active") return status === "queued" || status === "generating";
+  if (filter === "done") return status === "done" || status === "done_degraded";
+  if (filter === "failed") return status === "failed";
+  return true;
+}
+
 /**
  * История проектов.
  *
@@ -42,6 +52,7 @@ export function ProjectsList({ lang, email }: { lang: Lang; email?: string | nul
   const s = studio[lang];
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
 
   const load = useCallback(async (): Promise<PollOutcome> => {
     try {
@@ -65,6 +76,9 @@ export function ProjectsList({ lang, email }: { lang: Lang; email?: string | nul
   usePolling(load, POLL_MS);
 
   const counts = data?.counts;
+  const shown = data ? data.projects.filter((p) => matches(filter, p.status)) : [];
+  // Повторный щелчок по выбранной плитке снимает фильтр.
+  const pick = (next: Filter) => setFilter((current) => (current === next ? "all" : next));
 
   return (
     <>
@@ -85,11 +99,12 @@ export function ProjectsList({ lang, email }: { lang: Lang; email?: string | nul
         </div>
 
         {counts ? (
-          <div className="mt-7 flex flex-wrap gap-2.5">
-            <Stat label={s.library.active} value={counts.active} accent={counts.active > 0} />
-            <Stat label={s.library.done} value={counts.done} />
-            <Stat label={s.library.failed} value={counts.failed} />
-            <Stat label={s.library.total} value={counts.total} />
+          <div className="mt-7 flex flex-wrap gap-2.5" role="group" aria-label={s.library.title}>
+            <Stat label={s.library.active} value={counts.active} accent={counts.active > 0}
+              pressed={filter === "active"} onClick={() => pick("active")} />
+            <Stat label={s.library.done} value={counts.done} pressed={filter === "done"} onClick={() => pick("done")} />
+            <Stat label={s.library.failed} value={counts.failed} pressed={filter === "failed"} onClick={() => pick("failed")} />
+            <Stat label={s.library.total} value={counts.total} pressed={filter === "all"} onClick={() => setFilter("all")} />
           </div>
         ) : null}
 
@@ -112,9 +127,15 @@ export function ProjectsList({ lang, email }: { lang: Lang; email?: string | nul
           </div>
         ) : null}
 
-        {data && data.projects.length > 0 ? (
-          <Stagger className="mt-8 grid gap-3" gap={0.05}>
-            {data.projects.map((p) => (
+        {data && data.projects.length > 0 && shown.length === 0 ? (
+          <p className="mt-8 rounded-2xl border border-ink/12 bg-white/45 px-5 py-6 text-center text-[14.5px] text-ink-soft/75">
+            {s.library.noneInFilter}
+          </p>
+        ) : null}
+
+        {shown.length > 0 ? (
+          <Stagger key={filter} className="mt-8 grid gap-3" gap={0.05}>
+            {shown.map((p) => (
               <StaggerItem key={p.id} y={14}>
                 <Link
                   href={`/${lang}/projects/${p.id}`}
@@ -149,17 +170,24 @@ export function ProjectsList({ lang, email }: { lang: Lang; email?: string | nul
   );
 }
 
-function Stat({ label, value, accent = false }: { label: string; value: number; accent?: boolean }) {
+/** Плитка-счётчик и одновременно фильтр списка (ТЗ V1, Phase 3: фильтры по статусу). */
+function Stat({
+  label, value, accent = false, pressed, onClick,
+}: { label: string; value: number; accent?: boolean; pressed: boolean; onClick: () => void }) {
   return (
-    <div
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
       className={[
-        "rounded-2xl border px-4 py-3",
-        accent ? "border-sage/50 bg-sage/12" : "border-ink/12 bg-white/45",
+        "rounded-2xl border px-4 py-3 text-left transition",
+        pressed ? "border-ink ring-1 ring-ink/30" : "",
+        accent ? "border-sage/50 bg-sage/12" : "border-ink/12 bg-white/45 hover:border-ink/30",
       ].join(" ")}
     >
       <div className={`font-display text-[20px] font-bold ${accent ? "text-forest" : "text-ink"}`}>{value}</div>
       <div className="nav-link mt-0.5 text-ink-soft/55">{label}</div>
-    </div>
+    </button>
   );
 }
 

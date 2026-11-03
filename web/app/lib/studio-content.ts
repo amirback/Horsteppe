@@ -49,6 +49,8 @@ export type StudioDict = {
     emptyCta: string;
     open: string;
     statuses: Record<string, string>;
+    /** Плитки-счётчики фильтруют список; так выглядит пустой результат фильтра. */
+    noneInFilter: string;
   };
   project: {
     back: string;
@@ -189,6 +191,7 @@ export const studio: Record<Lang, StudioDict> = {
       emptyCta: "Create your first video",
       open: "Open",
       statuses: { queued: "Queued", generating: "Producing", done: "Ready", done_degraded: "Ready, with a note", failed: "Failed" },
+      noneInFilter: "No videos in this state.",
     },
     project: {
       back: "New video",
@@ -340,6 +343,7 @@ export const studio: Record<Lang, StudioDict> = {
       emptyCta: "Создать первый ролик",
       open: "Открыть",
       statuses: { queued: "В очереди", generating: "Собирается", done: "Готово", done_degraded: "Готово с оговоркой", failed: "Ошибка" },
+      noneInFilter: "Роликов в этом состоянии нет.",
     },
     project: {
       back: "Новое видео",
@@ -496,6 +500,7 @@ export const studio: Record<Lang, StudioDict> = {
       emptyCta: "Алғашқы роликті жасау",
       open: "Ашу",
       statuses: { queued: "Кезекте", generating: "Жиналуда", done: "Дайын", done_degraded: "Дайын, ескертпемен", failed: "Қате" },
+      noneInFilter: "Бұл күйде ролик жоқ.",
     },
     project: {
       back: "Жаңа бейне",
