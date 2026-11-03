@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+import threading
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -57,6 +59,10 @@ class ClipResult:
     provider: str
     model: str
     cost_usd: float
+    # Трата уже в журнале: её записали в миг, когда провайдер принял задачу.
+    # Тогда конвейер не пишет её второй раз.
+    recorded: bool = False
+    request_id: str | None = None
 
 
 def _chain_for(cfg: Config, provider: str | None) -> list[str]:
@@ -112,10 +118,13 @@ def generate_clip(
             if current == "replicate":
                 return _via_replicate(cfg, image_public_url, motion_prompt, out_path)
             return _via_fal(cfg, image_public_url, motion_prompt, out_path, hint, price)
-        except ContentRejected:
+        except (ContentRejected, AcceptedButNotDelivered):
             # Отклонение по содержанию — приговор для всей цепочки. Что
             # отвергла одна модель, отвергнет и соседняя, а вызов к ней
             # будет стоить денег.
+            #
+            # Принятая, но не отданная задача — тоже: она уже оплачена, и
+            # заказ того же кадра у соседа означал бы платить за него дважды.
             raise
         except VideoError as e:
             errors.append(f"{current}: {e}")
@@ -326,6 +335,94 @@ def _json_or_fail(response, what: str) -> dict:
         raise VideoError(f"Higgsfield вернул не JSON на {what}: {body}") from e
 
 
+ACTIVE_STATUSES = ("queued", "in_progress")
+# Как часто сообщать конвейеру о задаче, даже если её состояние не менялось:
+# на этом держится пульс задачи в очереди (db.heartbeat).
+HIGGSFIELD_STATUS_EVERY_SEC = 60
+HIGGSFIELD_DOWNLOAD_ATTEMPTS = 3
+
+
+@dataclass(frozen=True)
+class ProviderRequest:
+    """Задача, которую провайдер принял. С этой секунды она оплачивается.
+
+    Их спецификация говорит прямо: записи об оплате остаются даже после
+    удаления задачи. Поэтому номер задачи обязан пережить сбой сборщика.
+    """
+
+    provider: str
+    model: str
+    request_id: str
+    status_url: str = ""
+    cancel_url: str | None = None
+    status: str = "queued"
+    cost_usd: float = 0.0
+
+
+class AcceptedButNotDelivered(VideoError):
+    """Провайдер принял задачу, но клип мы не получили.
+
+    Идти к следующему провайдеру нельзя — за кадр заплатили бы дважды.
+    `retrievable` говорит, имеет ли смысл спросить о задаче позже: повтор
+    проекта заберёт результат, если тот к тому времени готов.
+    """
+
+    def __init__(self, message: str, *, request: ProviderRequest, status: str,
+                 recorded: bool, retrievable: bool) -> None:
+        super().__init__(message)
+        self.request = request
+        self.status = status
+        self.recorded = recorded
+        self.retrievable = retrievable
+
+
+# Обработчики «задача принята» и «состояние изменилось». Конвейер привязывает
+# их на время вызова — как страж бюджета, — поэтому подпись generate_clip
+# не меняется и все прежние подмены в тестах остаются верными.
+_tracking = threading.local()
+
+
+@contextmanager
+def tracking(on_accepted=None, on_status=None):
+    previous = getattr(_tracking, "handlers", None)
+    _tracking.handlers = (on_accepted, on_status)
+    try:
+        yield
+    finally:
+        _tracking.handlers = previous
+
+
+def _notify_accepted(request: ProviderRequest) -> bool:
+    """Сообщить о принятой задаче. True — трата уже в журнале.
+
+    Сбой обработчика не должен терять клип: задача оплачена, и забрать
+    результат важнее. Тогда трату запишет конвейер после — как раньше.
+    """
+    on_accepted = (getattr(_tracking, "handlers", None) or (None, None))[0]
+    if on_accepted is None:
+        return False
+    try:
+        return bool(on_accepted(request))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Higgsfield: задача %s принята, но не записана: %s", request.request_id, e)
+        return False
+
+
+def _notify_status(request: ProviderRequest, state: str) -> None:
+    on_status = (getattr(_tracking, "handlers", None) or (None, None))[1]
+    if on_status is None:
+        return
+    try:
+        on_status(request, state)
+    except Exception as e:  # noqa: BLE001 — запись состояния не важнее клипа
+        log.warning("Higgsfield: состояние задачи %s не записано: %s", request.request_id, e)
+
+
+def _status_url(request_id: str) -> str:
+    """Адрес из их openapi.json 2.0.0: GET /requests/{request_id}/status."""
+    return f"{HIGGSFIELD_BASE}/requests/{request_id}/status"
+
+
 def _higgsfield_headers(cfg: Config) -> dict:
     return {
         "Authorization": f"Key {cfg.higgsfield_credential}",
@@ -346,8 +443,6 @@ def _via_higgsfield(
     Промпт сюда приходит уже как описание движения: их же руководство по
     промптам требует не пересказывать кадр, который модель и так видит.
     """
-    import time
-
     if not cfg.higgsfield_credential:
         raise VideoError("HF_KEY (или HF_API_KEY и HF_API_SECRET) не задан")
 
@@ -363,43 +458,152 @@ def _via_higgsfield(
     }
     if HIGGSFIELD_NEGATIVE.strip():
         payload["negative_prompt"] = HIGGSFIELD_NEGATIVE.strip()
-    headers = _higgsfield_headers(cfg)
 
+    # До ответа на постановку денег не взяли: сбой здесь — обычный отказ,
+    # и цепочка вправе попробовать соседа.
     try:
         with httpx.Client(timeout=120) as client:
-            started = _higgsfield_submit(client, f"{HIGGSFIELD_BASE}/{model}", headers, payload)
-            deadline = time.monotonic() + HIGGSFIELD_TIMEOUT_SEC
-            status_url = started.get("status_url") or f"{HIGGSFIELD_BASE}/requests/{started['request_id']}/status"
-
-            state = started.get("status") or "queued"
-            data = started
-            while state in ("queued", "in_progress"):
-                if time.monotonic() > deadline:
-                    _higgsfield_cancel(client, headers, started)
-                    raise VideoError(f"Higgsfield не отдал клип за {HIGGSFIELD_TIMEOUT_SEC:.0f} с")
-                time.sleep(HIGGSFIELD_POLL_SEC)
-                data = _json_or_fail(client.get(status_url, headers=headers), "опросе статуса")
-                state = data.get("status") or "in_progress"
-
-            if state in CONTENT_STATUSES:
-                raise ContentRejected(f"Higgsfield отклонил кадр по содержанию ({state})")
-            if state != "completed":
-                raise VideoError(f"Higgsfield: {state} — {str(data.get('error'))[:300]}")
-
-            url = (data.get("video") or {}).get("url")
-            if not url:
-                raise VideoError("Higgsfield вернул готовый ответ без ссылки на видео")
-
-            clip = client.get(url, timeout=300)
-            clip.raise_for_status()
-    except ContentRejected:
-        raise
+            started = _higgsfield_submit(client, f"{HIGGSFIELD_BASE}/{model}", _higgsfield_headers(cfg), payload)
     except httpx.HTTPError as e:
         raise VideoError(f"Higgsfield: сеть — {e}") from e
+    if not started.get("request_id"):
+        raise VideoError(f"Higgsfield не вернул номер задачи: {str(started)[:200]}")
 
-    out_path.write_bytes(clip.content)
-    quality_debug.record_clip(out_path.stem, "higgsfield", model, payload, out_path)
-    return ClipResult("higgsfield", model, COSTS["higgsfield_video_per_clip"])
+    request = ProviderRequest(
+        provider="higgsfield", model=model, request_id=str(started["request_id"]),
+        status_url=started.get("status_url") or _status_url(started["request_id"]),
+        cancel_url=started.get("cancel_url"),
+        status=started.get("status") or "queued",
+        cost_usd=COSTS["higgsfield_video_per_clip"],
+    )
+    recorded = _notify_accepted(request)
+    return _collect_higgsfield(cfg, request, out_path, payload, recorded=recorded, first=started)
+
+
+def resume_clip(cfg: Config, request: ProviderRequest, out_path: Path) -> ClipResult:
+    """Забрать результат задачи, принятой в прошлом запуске. Нового заказа нет.
+
+    Трата этой задачи записана тогда же, когда записан её номер, поэтому
+    результат помечен как уже учтённый.
+    """
+    if not safe_mode.is_paid_allowed(cfg):
+        raise safe_mode.PaidCallBlocked(
+            "продолжение задачи видео: платные провайдеры отключены (MVP_SAFE_MODE=1)"
+        )
+    if request.provider != "higgsfield":
+        raise VideoError(f"продолжить задачу у {request.provider} нельзя — номер хранится только у Higgsfield")
+    if not cfg.higgsfield_credential:
+        raise VideoError("HF_KEY (или HF_API_KEY и HF_API_SECRET) не задан")
+    if not request.status_url:
+        request = replace(request, status_url=_status_url(request.request_id))
+    log.info("Higgsfield: продолжаю задачу %s без нового заказа", request.request_id)
+    return _collect_higgsfield(cfg, request, out_path, None, recorded=True)
+
+
+def _collect_higgsfield(
+    cfg: Config, request: ProviderRequest, out_path: Path, payload: dict | None,
+    *, recorded: bool, first: dict | None = None,
+) -> ClipResult:
+    """Дождаться принятой задачи и скачать клип.
+
+    Сбой связи посреди ожидания больше не бросает оплаченную задачу: опрос
+    повторяется до общего срока. Раньше один обрыв или страница анти-бота
+    здесь отдавали кадр следующему провайдеру — и за него платили дважды.
+    """
+    import time
+
+    headers = _higgsfield_headers(cfg)
+
+    def undelivered(message: str, status: str, retrievable: bool) -> AcceptedButNotDelivered:
+        if status != told:
+            _notify_status(request, status)
+        return AcceptedButNotDelivered(
+            message, request=request, status=status, recorded=recorded, retrievable=retrievable,
+        )
+
+    with httpx.Client(timeout=120) as client:
+        deadline = time.monotonic() + HIGGSFIELD_TIMEOUT_SEC
+        data = first or {}
+        state = (first.get("status") or "queued") if first else "unknown"
+        must_poll = first is None
+        told, told_at, problem = state, time.monotonic(), ""
+
+        while must_poll or state in ACTIVE_STATUSES:
+            if not must_poll:
+                if time.monotonic() > deadline:
+                    waited = f"Higgsfield не отдал клип за {HIGGSFIELD_TIMEOUT_SEC:.0f} с"
+                    if _higgsfield_cancel(client, headers, request):
+                        raise undelivered(f"{waited} — задача снята из очереди", "canceled", False)
+                    raise undelivered(waited + (f" ({problem})" if problem else ""), "timeout", True)
+                time.sleep(HIGGSFIELD_POLL_SEC)
+            must_poll = False
+
+            try:
+                response = client.get(request.status_url, headers=headers)
+            except httpx.HTTPError as e:
+                problem, state = f"сеть — {e}", (state if state in ACTIVE_STATUSES else "in_progress")
+                continue
+            code = response.status_code
+            if code == 404:
+                raise undelivered("Higgsfield не знает этой задачи (404)", "missing", False)
+            if code == 401:
+                raise undelivered("Higgsfield отклонил ключ при опросе (401)", "unauthorized", True)
+            if code in HIGGSFIELD_RETRY_CODES or code >= 500 or code < 400:
+                try:
+                    polled = response.json() if code < 400 else None
+                except ValueError:
+                    polled = None
+                if not isinstance(polled, dict):
+                    polled = None
+                if polled is None:
+                    problem = f"HTTP {code}" if code >= 400 else "ответ не JSON (страница проверки?)"
+                    state = state if state in ACTIVE_STATUSES else "in_progress"
+                    continue
+            else:
+                raise undelivered(f"Higgsfield: HTTP {code} при опросе — {response.text[:200]}", "error", True)
+
+            data, problem = polled, ""
+            state = data.get("status") or "in_progress"
+            if state != told or time.monotonic() - told_at >= HIGGSFIELD_STATUS_EVERY_SEC:
+                _notify_status(request, state)
+                told, told_at = state, time.monotonic()
+
+        if state != told:
+            _notify_status(request, state)
+            told = state
+        if state in CONTENT_STATUSES:
+            raise ContentRejected(f"Higgsfield отклонил кадр по содержанию ({state})")
+        if state != "completed":
+            raise undelivered(f"Higgsfield: {state} — {str(data.get('error'))[:300]}", state, False)
+
+        url = (data.get("video") or {}).get("url")
+        if not url:
+            raise undelivered("Higgsfield вернул готовый ответ без ссылки на видео", "completed", False)
+
+        content = None
+        for attempt in range(1, HIGGSFIELD_DOWNLOAD_ATTEMPTS + 1):
+            try:
+                clip = client.get(url, timeout=300)
+                if clip.status_code < 400 and clip.content:
+                    content = clip.content
+                    break
+                problem = f"HTTP {clip.status_code}"
+            except httpx.HTTPError as e:
+                problem = f"сеть — {e}"
+            if attempt < HIGGSFIELD_DOWNLOAD_ATTEMPTS:
+                time.sleep(2 * attempt)
+        if content is None:
+            # Клип готов и оплачен, ссылка живёт до expires_at: повтор проекта
+            # успеет его забрать, если не тянуть сутками.
+            raise undelivered(f"готовый клип не скачался: {problem}", "completed", True)
+
+    out_path.write_bytes(content)
+    quality_debug.record_clip(
+        out_path.stem, "higgsfield", request.model, payload or {"request_id": request.request_id}, out_path,
+    )
+    return ClipResult(
+        "higgsfield", request.model, request.cost_usd, recorded=recorded, request_id=request.request_id,
+    )
 
 
 def _higgsfield_submit(client, url: str, headers: dict, payload: dict) -> dict:
@@ -422,18 +626,22 @@ def _higgsfield_submit(client, url: str, headers: dict, payload: dict) -> dict:
     raise VideoError(f"Higgsfield отказал — {last}")
 
 
-def _higgsfield_cancel(client, headers: dict, started: dict) -> None:
-    """Снять задачу, которую мы перестали ждать.
+def _higgsfield_cancel(client, headers: dict, request: ProviderRequest) -> bool:
+    """Снять задачу, которую мы перестали ждать. True — снята.
 
-    Брошенный запрос продолжает считаться и тратить кредиты. Отмена не
-    обязана сработать — начатую генерацию остановить нельзя, — поэтому её
-    неудача не должна подменять собой исходную ошибку таймаута.
+    Брошенный запрос продолжает считаться и тратить кредиты. По их
+    спецификации снять можно только ту, что ещё стоит в очереди (202);
+    начатую — нельзя (400). Неудача отмены не подменяет собой ошибку
+    таймаута: задача тогда остаётся у кадра, и повтор её дождётся.
     """
-    url = started.get("cancel_url")
-    if not url:
-        return
+    url = request.cancel_url or f"{HIGGSFIELD_BASE}/requests/{request.request_id}/cancel"
     try:
-        client.post(url, headers=headers, timeout=20)
-        log.info("Higgsfield: задача %s снята по таймауту", started.get("request_id"))
+        response = client.post(url, headers=headers, timeout=20)
     except Exception as e:  # noqa: BLE001 — отмена не важнее причины отказа
-        log.warning("Higgsfield: снять задачу не удалось: %s", e)
+        log.warning("Higgsfield: снять задачу %s не удалось: %s", request.request_id, e)
+        return False
+    if getattr(response, "status_code", None) == 202:
+        log.info("Higgsfield: задача %s снята из очереди по таймауту", request.request_id)
+        return True
+    log.info("Higgsfield: задача %s уже идёт, снять её нельзя — ждём при повторе", request.request_id)
+    return False
