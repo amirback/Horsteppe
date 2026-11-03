@@ -1,162 +1,241 @@
-"""Один настоящий клип от провайдера — ручная проверка перед включением режима.
+"""Один настоящий клип Higgsfield — ручная проверка платного пути.
 
-Зачем отдельный скрипт. Весь конвейер до сих пор собирал ролики из картинок, и
-доказательства, что настоящее видео вообще приходит от провайдера, у нас нет:
-путь проверен только на подменённом клиенте. Прогонять ради этого полный
-30-секундный ролик — значит заказать шесть клипов вместо одного.
+Зачем отдельный скрипт. Конвейер проверен на подменённом провайдере, а ТЗ V1
+требует доказать путь на настоящем: задача создаётся у Higgsfield, её номер
+сохраняется, ожидание переживает смерть процесса, клип скачивается и
+открывается. Полный ролик заказал бы шесть клипов; здесь — ровно один.
 
-Скрипт делает **ровно один** платный вызов и ничего больше: ни сценария, ни
-озвучки, ни монтажа. Повторов нет.
+Без запасных провайдеров: цепочка в процессе сужена до Higgsfield, и чужой
+клип не выдаётся за его результат. Повторов заказа нет.
 
-Запускается только руками и только с явным разрешением:
+Режимы (запуск из каталога worker):
 
-    ALLOW_PAID_SMOKE_TEST=1 worker/.venv/bin/python worker/scripts/smoke_real_video.py
+    # сухой прогон — ни одного обращения к провайдеру
+    .venv/bin/python scripts/smoke_real_video.py
 
-Без переменной скрипт выходит, не обратившись к провайдеру. В pytest он не
-попадает: имя файла не начинается с `test_`, и он лежит вне каталога тестов.
+    # честная ошибка на неверном ключе — бесплатно, задача не создаётся
+    .venv/bin/python scripts/smoke_real_video.py --bad-key
 
-Картинку берём готовую — из уже собранного проекта. Новых не создаём.
-Переопределить можно переменной SMOKE_IMAGE_URL.
+    # один платный клип (~$0.09 по счёту, $0.35 по нашему учёту)
+    ALLOW_PAID_SMOKE_TEST=1 MVP_SAFE_MODE=0 .venv/bin/python scripts/smoke_real_video.py
 
-VIDEO_MODE трогать не нужно: шаг видео спрашивает только MVP_SAFE_MODE.
+    # то же, но процесс «умирает» сразу после постановки задачи...
+    ALLOW_PAID_SMOKE_TEST=1 MVP_SAFE_MODE=0 .venv/bin/python scripts/smoke_real_video.py --kill-after-accept
+    # ...и второй запуск забирает ту же задачу без нового заказа
+    MVP_SAFE_MODE=0 .venv/bin/python scripts/smoke_real_video.py --resume
+
+Картинка — наша собственная с сайта (SMOKE_IMAGE_URL переопределяет): чужих
+прав и лиц в ней нет, а база для проверки не нужна.
+
+Номер принятой задачи пишется в output/smoke/last_request.json в тот же миг,
+когда Higgsfield её принял. Ключи не печатаются никогда.
 """
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 ALLOW_FLAG = "ALLOW_PAID_SMOKE_TEST"
-OUT_PATH = ROOT / "output" / "smoke" / "real_video_test.mp4"
-REQUESTED_SECONDS = 5
+OUT_DIR = ROOT / "output" / "smoke"
+OUT_PATH = OUT_DIR / "real_video_test.mp4"
+JOURNAL = OUT_DIR / "last_request.json"
+DEFAULT_IMAGE = "https://horsteppe.vercel.app/og.png"
+PROMPT = "slow cinematic camera push-in, soft light drifting across the frame, subtle natural motion"
 
 
-def _fail(message: str) -> int:
-    print(f"\n  ОСТАНОВЛЕНО: {message}")
-    print("  Платный вызов НЕ выполнялся.")
-    return 1
-
-
-def _probe(path: Path) -> tuple[float, int, int]:
-    """Длительность и размер кадра по разбору вывода ffmpeg."""
+def _probe(path: Path) -> dict:
+    """Что внутри файла — по разбору вывода ffmpeg, без ffprobe в системе."""
     import media
 
-    proc = subprocess.run(
-        [media.ffmpeg_path(), "-hide_banner", "-i", str(path)],
-        capture_output=True, text=True,
-    )
-    text = proc.stderr
-    video = re.search(r"Stream #\d+:\d+.*: Video: .*?(\d{2,5})x(\d{2,5})", text)
-    if not video:
-        return media.media_duration_sec(path), 0, 0
-    return media.media_duration_sec(path), int(video.group(1)), int(video.group(2))
+    text = subprocess.run(
+        [media.ffmpeg_path(), "-hide_banner", "-i", str(path)], capture_output=True, text=True,
+    ).stderr
+    video = re.search(r"Stream #\d+:\d+.*?: Video: (\w+).*?(\d{2,5})x(\d{2,5})", text)
+    return {
+        "bytes": path.stat().st_size,
+        "duration_sec": round(media.media_duration_sec(path), 2),
+        "codec": video.group(1) if video else None,
+        "width": int(video.group(2)) if video else 0,
+        "height": int(video.group(3)) if video else 0,
+    }
 
 
-def _reference_image(cfg) -> str:
-    """Готовая картинка из последнего собранного проекта."""
-    override = os.environ.get("SMOKE_IMAGE_URL", "").strip()
-    if override:
-        return override
-
-    from db import Db
-
-    rows = (
-        Db(cfg).client.table("shots")
-        .select("image_url")
-        .not_.is_("image_url", "null")
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-        .data
-    )
-    if not rows:
-        raise RuntimeError(
-            "в базе нет ни одной готовой картинки — укажите SMOKE_IMAGE_URL вручную"
-        )
-    return rows[0]["image_url"]
+def _report(title: str, rows: dict, ok: bool) -> int:
+    print(f"\n{title}")
+    for key, value in rows.items():
+        print(f"  {key:<16} {value}")
+    print(f"\nSTATUS: {'PASS' if ok else 'FAIL'}")
+    return 0 if ok else 1
 
 
-def main() -> int:
+def _config(*, paid: bool):
     from dotenv import load_dotenv
 
     load_dotenv(ROOT / ".env")
-    print("=== ПРОВЕРКА НАСТОЯЩЕГО ВИДЕО ===")
+    # Только Higgsfield: запасной провайдер подменил бы собой то, что проверяем.
+    os.environ["VIDEO_PROVIDER"] = "higgsfield"
+    if paid:
+        os.environ["VIDEO_MODE"] = "provider"
+    from config import Config
 
-    if os.environ.get(ALLOW_FLAG) != "1":
-        return _fail(
-            f"нет разрешения на трату. Запустите с {ALLOW_FLAG}=1, "
-            "если согласны оплатить один клип"
-        )
+    return Config()
 
-    from config import COSTS, Config
+
+def _verify(done, started_at: float, mode: str) -> int:
+    problems = []
+    info = _probe(OUT_PATH) if OUT_PATH.exists() and OUT_PATH.stat().st_size else {}
+    if not info:
+        problems.append("файл не создан или пуст")
+    elif info["duration_sec"] <= 0 or not info["width"]:
+        problems.append("в файле нет видеопотока")
+    return _report("REAL VIDEO SMOKE TEST — " + mode, {
+        "Provider": done.provider,
+        "Model": done.model,
+        "Request ID": done.request_id,
+        "Ledger cost": f"${done.cost_usd:.2f} (по нашему учёту; счёт Higgsfield — в кабинете)",
+        "Output": OUT_PATH,
+        "Duration": f"{info.get('duration_sec', 0)} с",
+        "Resolution": f"{info.get('width', 0)}x{info.get('height', 0)} ({info.get('codec')})",
+        "Size": f"{info.get('bytes', 0)} байт",
+        "Wall time": f"{time.monotonic() - started_at:.0f} с",
+        **({"Problems": "; ".join(problems)} if problems else {}),
+    }, not problems)
+
+
+def bad_key() -> int:
+    """Неверный ключ: Higgsfield отказывает на постановке, задача не создаётся."""
+    _config(paid=False)  # окружение из .env; настоящий ключ ниже подменяется
+    os.environ["HF_KEY"] = "smoke-invalid-id:smoke-invalid-secret"
+    os.environ.pop("HF_API_KEY", None)
+    os.environ.pop("HF_API_SECRET", None)
+    from config import Config
     from steps import video_step
 
     cfg = Config()
+    try:
+        video_step._via_higgsfield(cfg, os.environ.get("SMOKE_IMAGE_URL") or DEFAULT_IMAGE, PROMPT,
+                                   OUT_DIR / "never_written.mp4")
+    except video_step.AcceptedButNotDelivered as e:
+        return _report("BAD KEY CHECK", {"Result": f"задача принята с чужим ключом?! {e}"}, False)
+    except video_step.VideoError as e:
+        honest = "401" in str(e) or "403" in str(e)
+        return _report("BAD KEY CHECK", {
+            "Error shown": str(e)[:200],
+            "Task created": "нет — отказ до постановки, денег не взято",
+        }, honest)
+    return _report("BAD KEY CHECK", {"Result": "клип выдан с неверным ключом — так быть не может"}, False)
 
-    # Значения ключей не печатаем — только факт наличия.
-    if not cfg.fal_key:
-        return _fail("FAL_KEY не задан")
+
+def resume() -> int:
+    """Забрать задачу из журнала без нового заказа."""
+    if not JOURNAL.exists():
+        print(f"  ОСТАНОВЛЕНО: журнала {JOURNAL} нет — продолжать нечего.")
+        return 1
+    saved = json.loads(JOURNAL.read_text(encoding="utf-8"))
+    cfg = _config(paid=True)
     if cfg.mvp_safe_mode:
-        return _fail("MVP_SAFE_MODE включён — платные вызовы запрещены")
+        print("  ОСТАНОВЛЕНО: MVP_SAFE_MODE включён — к провайдеру не обращаемся.")
+        return 1
+    from steps import video_step
 
+    request = video_step.ProviderRequest(
+        provider=saved["provider"], model=saved["model"], request_id=saved["request_id"],
+        status_url=saved.get("status_url") or "", cost_usd=float(saved.get("cost_usd") or 0),
+    )
+    print(f"=== ПРОДОЛЖЕНИЕ ЗАДАЧИ {request.request_id} (нового заказа нет) ===")
+    started_at = time.monotonic()
     try:
-        image_url = _reference_image(cfg)
-    except Exception as e:  # noqa: BLE001 — причина важнее трассировки
-        return _fail(str(e))
+        done = video_step.resume_clip(cfg, request, OUT_PATH)
+    except video_step.VideoError as e:
+        status = getattr(e, "status", "?")
+        return _report("REAL VIDEO SMOKE TEST — resume", {
+            "Request ID": request.request_id, "Status": status, "Error": str(e)[:300],
+            "Retrievable": getattr(e, "retrievable", "?"),
+        }, False)
+    return _verify(done, started_at, "resume")
 
-    cost = COSTS["fal_video_per_clip"]
-    print(f"  провайдер:      fal.ai")
-    print(f"  модель:         {cfg.fal_video_model}")
-    print(f"  длительность:   {REQUESTED_SECONDS} с")
-    print(f"  оценка расхода: ${cost:.2f}")
-    print(f"  исходный кадр:  {image_url[:78]}…")
-    print(f"  ключ FAL_KEY:   задан")
-    print("\n  Выполняется ОДИН вызов провайдера. Это может занять несколько минут…")
 
-    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    prompt = "slow cinematic camera push-in, subtle natural motion, film grain"
-
-    try:
-        actual_cost = video_step.generate_clip(cfg, image_url, prompt, OUT_PATH)
-    except Exception as e:  # noqa: BLE001 — печатаем причину, а не падаем стеком
-        print(f"\n  провайдер отказал: {e}")
-        print("\nREAL VIDEO SMOKE TEST")
-        print(f"  Provider:       fal.ai")
-        print(f"  Model:          {cfg.fal_video_model}")
-        print(f"  Output:         —")
-        print(f"  Duration:       —")
-        print(f"  Resolution:     —")
-        print(f"  Estimated cost: ${cost:.2f}")
-        print("\nSTATUS: FAIL")
+def order(kill_after_accept: bool) -> int:
+    """Один платный клип. Номер задачи — в журнал в миг принятия."""
+    if os.environ.get(ALLOW_FLAG) != "1":
+        print(f"  ОСТАНОВЛЕНО: нет разрешения на трату. Запустите с {ALLOW_FLAG}=1 и MVP_SAFE_MODE=0.")
+        print("  Платный вызов НЕ выполнялся.")
+        return 1
+    cfg = _config(paid=True)
+    if cfg.mvp_safe_mode:
+        print("  ОСТАНОВЛЕНО: MVP_SAFE_MODE включён — платные вызовы запрещены.")
+        print("  Платный вызов НЕ выполнялся.")
+        return 1
+    if not cfg.higgsfield_credential:
+        print("  ОСТАНОВЛЕНО: HF_KEY (или HF_API_KEY и HF_API_SECRET) не задан.")
         return 1
 
-    problems: list[str] = []
-    if not OUT_PATH.exists() or OUT_PATH.stat().st_size == 0:
-        problems.append("файл не создан или пуст")
-        duration = width = height = 0
-    else:
-        duration, width, height = _probe(OUT_PATH)
-        if duration <= 0:
-            problems.append("длительность равна нулю")
-        if width <= 0 or height <= 0:
-            problems.append("видеопоток не найден")
+    from config import COSTS
+    from steps import video_step
 
-    print("\nREAL VIDEO SMOKE TEST")
-    print(f"  Provider:       fal.ai")
-    print(f"  Model:          {cfg.fal_video_model}")
-    print(f"  Output:         {OUT_PATH}")
-    print(f"  Duration:       {duration:.2f} с")
-    print(f"  Resolution:     {width}x{height}")
-    print(f"  Estimated cost: ${actual_cost:.2f}")
-    if problems:
-        print(f"  Проблемы:       {'; '.join(problems)}")
-    print(f"\nSTATUS: {'FAIL' if problems else 'PASS'}")
-    return 1 if problems else 0
+    image = os.environ.get("SMOKE_IMAGE_URL") or DEFAULT_IMAGE
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    print("=== ОДИН НАСТОЯЩИЙ КЛИП HIGGSFIELD ===")
+    print(f"  модель:         {cfg.higgsfield_video_model}")
+    print(f"  длительность:   {video_step.HIGGSFIELD_DURATION} с")
+    print(f"  оценка расхода: ${COSTS['higgsfield_video_per_clip']:.2f} по учёту (≈$0.09 по счёту основателя)")
+    print(f"  исходный кадр:  {image}")
+    print("  ключ:           задан (значение не печатается)")
+
+    def accepted(request) -> bool:
+        JOURNAL.write_text(json.dumps({
+            "provider": request.provider, "model": request.model, "request_id": request.request_id,
+            "status_url": request.status_url, "cost_usd": request.cost_usd,
+            "accepted_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"  задача принята: {request.request_id} → номер записан в {JOURNAL.name}")
+        if kill_after_accept:
+            print("  --kill-after-accept: процесс завершается, не дождавшись клипа.")
+            os._exit(3)
+        return False
+
+    def status(request, state: str) -> None:
+        print(f"  состояние:      {state}")
+
+    started_at = time.monotonic()
+    try:
+        with video_step.tracking(on_accepted=accepted, on_status=status):
+            done = video_step.generate_clip(cfg, image, PROMPT, OUT_PATH, provider="higgsfield")
+    except video_step.VideoError as e:
+        return _report("REAL VIDEO SMOKE TEST — order", {
+            "Error": str(e)[:300], "Status": getattr(e, "status", "до постановки"),
+            "Retrievable": getattr(e, "retrievable", False),
+        }, False)
+    return _verify(done, started_at, "order")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--resume", action="store_true", help="забрать задачу из журнала без нового заказа")
+    parser.add_argument("--kill-after-accept", action="store_true", help="умереть сразу после постановки")
+    parser.add_argument("--bad-key", action="store_true", help="бесплатная проверка честной ошибки ключа")
+    parser.add_argument("--dry-run", action="store_true", help="ничего не вызывать")
+    args = parser.parse_args()
+
+    if args.bad_key:
+        return bad_key()
+    if args.resume:
+        return resume()
+    if args.dry_run or os.environ.get(ALLOW_FLAG) != "1":
+        print("=== СУХОЙ ПРОГОН: к провайдеру не обращаемся ===")
+        print(f"  платный клип: {ALLOW_FLAG}=1 MVP_SAFE_MODE=0 .venv/bin/python scripts/smoke_real_video.py")
+        print(f"  журнал задачи: {JOURNAL}")
+        return 0
+    return order(args.kill_after_accept)
 
 
 if __name__ == "__main__":
