@@ -68,6 +68,11 @@ def cfg(monkeypatch):
     monkeypatch.setenv("MVP_SAFE_MODE", "0")
     monkeypatch.setenv("SCRIPT_MODE", "llm")
     monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    # Цепочка задаётся явно. Раньше она бралась из настоящего worker/.env,
+    # начиналась с Anthropic, и каждый тест отправлял настоящий запрос с
+    # настоящим ключом — подменён был только OpenRouter.
+    monkeypatch.setenv("SCRIPT_PROVIDER", "openrouter")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("ELEVENLABS_API_KEY", "test")
     monkeypatch.setenv("FAL_KEY", "test")
