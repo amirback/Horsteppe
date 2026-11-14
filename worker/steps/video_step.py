@@ -102,6 +102,8 @@ def generate_clip(
     price = COSTS["fal_video_per_clip"] if cost_usd is None else float(cost_usd)
     safe_mode.require_paid(cfg, "генерация видео", price)
 
+    if budget_usd is None:
+        budget_usd = getattr(_tracking, "budget", None)
     chain = _chain_for(cfg, provider)
     # Имя модели осмысленно только для того провайдера, который её и
     # предложил. Отдавать `kling-video/v2.5-turbo` в fal или наоборот — верный
@@ -385,13 +387,18 @@ _tracking = threading.local()
 
 
 @contextmanager
-def tracking(on_accepted=None, on_status=None):
-    previous = getattr(_tracking, "handlers", None)
-    _tracking.handlers = (on_accepted, on_status)
+def tracking(on_accepted=None, on_status=None, budget_usd=None):
+    """Обработчики задачи кадра и остаток бюджета на него.
+
+    Бюджет передаётся здесь, а не аргументом generate_clip: так очередь
+    моделей узнаёт его, не меняя вызов, на который опираются заглушки тестов.
+    """
+    previous = getattr(_tracking, "handlers", None), getattr(_tracking, "budget", None)
+    _tracking.handlers, _tracking.budget = (on_accepted, on_status), budget_usd
     try:
         yield
     finally:
-        _tracking.handlers = previous
+        _tracking.handlers, _tracking.budget = previous
 
 
 def _notify_accepted(request: ProviderRequest) -> bool:

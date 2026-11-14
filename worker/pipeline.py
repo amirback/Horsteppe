@@ -164,7 +164,11 @@ def _clip_tracking(db: Db, guard, project_id: str, shot: dict, index: int):
         db.remember_provider_request(shot["id"], provider_status=state)
         db.heartbeat(project_id)
 
-    return video_step.tracking(on_accepted=accepted, on_status=status)
+    # Остаток бюджета нужен очереди внутри уровня: запасная модель (Seedance
+    # 2.5 за Kling 4.0) дороже выбранной и берёт кадр, только если деньги на
+    # неё есть. Проект без потолка ограничений не ставит.
+    return video_step.tracking(on_accepted=accepted, on_status=status,
+                               budget_usd=guard.spendable_usd if guard.has_ceiling else math.inf)
 
 
 def _forget_request(db: Db, shot: dict, error: Exception | None = None) -> None:

@@ -74,10 +74,12 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
         })
 
         cls.calls: list[str] = []
+        cls.budgets: list = []
 
         def fake_provider(cfg, image_url, motion_prompt, out_path, model=None, cost_usd=None, provider=None):
             """Стоит как настоящий вызов, но ничего не платит."""
             cls.calls.append(image_url)
+            cls.budgets.append(getattr(video_step._tracking, "budget", None))
             out_path.write_bytes(cls.clip.read_bytes())
             return video_step.ClipResult("higgsfield", "kling-video/v2.5-turbo/pro/image-to-video", 0.35)
 
@@ -132,6 +134,12 @@ class RealVideoReachesTimelineTest(unittest.TestCase):
         planned = [s for s in self.db.shots if shot_plan.preferred_mode(s) == "real_video"]
         self.assertEqual(len(self.calls), len(planned))
         self.assertLess(len(planned), len(self.db.shots), "фоновым кадрам видео не нужно")
+
+    def test_every_clip_call_knows_the_budget_left(self) -> None:
+        """Очереди моделей в уровне нужен остаток бюджета: без него запасная
+        модель дороже выбранной не возьмёт кадр, а с ним — не выйдет за потолок."""
+        self.assertTrue(self.budgets)
+        self.assertTrue(all(b is not None and b >= 0 for b in self.budgets), self.budgets)
 
     def test_planned_shots_became_real_video(self) -> None:
         from steps import shot_plan
