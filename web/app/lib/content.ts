@@ -59,12 +59,12 @@ export const content: Record<Lang, Dict> = {
     ],
     pricing: {
       kicker: "Pricing",
-      title: "No price list yet",
-      sub: "We measure what a finished video actually costs before we sell one. Until then, early access is free.",
+      title: "Early access",
+      sub: "The price depends on the length of the video and is agreed before we start.",
       tiers: [
         {
           name: "Early access",
-          price: "Free",
+          price: "On request",
           items: ["Unlimited drafts", "Vertical and horizontal", "Voice and subtitles included", "We help by hand if something breaks"],
           highlight: true,
         },
@@ -79,7 +79,7 @@ export const content: Record<Lang, Dict> = {
           items: ["Bring your own provider key", "Batch generation", "Brand kit and presets"],
         },
       ],
-      note: "Why no price: the cost of one video is driven almost entirely by premium video seconds, and that number is only known after a few dozen real runs.",
+      note: "Why the price list is not published yet: the cost of a video is driven almost entirely by premium video seconds, and we are pinning that number down on real orders.",
       cta: "Start creating",
     },
     footer: {
@@ -128,12 +128,12 @@ export const content: Record<Lang, Dict> = {
     ],
     pricing: {
       kicker: "Тарифы",
-      title: "Прайса пока нет",
-      sub: "Сначала измеряем, во сколько реально обходится готовый ролик. До тех пор ранний доступ бесплатный.",
+      title: "Ранний доступ",
+      sub: "Стоимость зависит от длины ролика и согласуется до начала работы.",
       tiers: [
         {
           name: "Ранний доступ",
-          price: "Бесплатно",
+          price: "По запросу",
           items: ["Без ограничений на черновики", "Вертикально и горизонтально", "Голос и субтитры включены", "Помогаем руками, если что-то сломалось"],
           highlight: true,
         },
@@ -148,7 +148,7 @@ export const content: Record<Lang, Dict> = {
           items: ["Свой ключ провайдера", "Пакетная генерация", "Бренд-кит и пресеты"],
         },
       ],
-      note: "Почему цены нет: себестоимость ролика почти целиком определяется премиум-секундами видео, а это число известно только после нескольких десятков реальных прогонов.",
+      note: "Почему прайс пока не опубликован: себестоимость ролика почти целиком определяется премиум-секундами видео, и мы уточняем её на реальных заказах.",
       cta: "Начать",
     },
     footer: {
@@ -197,12 +197,12 @@ export const content: Record<Lang, Dict> = {
     ],
     pricing: {
       kicker: "Тарифтер",
-      title: "Бағасы әлі жоқ",
-      sub: "Алдымен дайын ролик шын мәнінде қанша тұратынын өлшейміз. Оған дейін ерте қолжетімділік тегін.",
+      title: "Ерте қолжетімділік",
+      sub: "Құны ролик ұзақтығына байланысты және жұмыс басталғанға дейін келісіледі.",
       tiers: [
         {
           name: "Ерте қолжетімділік",
-          price: "Тегін",
+          price: "Сұраныс бойынша",
           items: ["Нобайларға шек жоқ", "Тік және көлденең", "Дауыс пен субтитр кіреді", "Бірдеңе сынса — қолмен көмектесеміз"],
           highlight: true,
         },
@@ -217,7 +217,7 @@ export const content: Record<Lang, Dict> = {
           items: ["Өз провайдер кілтіңіз", "Топтық генерация", "Бренд-кит және пресеттер"],
         },
       ],
-      note: "Неге бағасы жоқ: роликтің өзіндік құны негізінен премиум-секундтармен анықталады, ал бұл сан бірнеше ондаған нақты жүрістен кейін ғана белгілі болады.",
+      note: "Неге баға тізімі әлі жарияланбаған: роликтің өзіндік құны негізінен премиум-секундтармен анықталады, біз оны нақты тапсырыстарда нақтылап жатырмыз.",
       cta: "Бастау",
     },
     footer: {

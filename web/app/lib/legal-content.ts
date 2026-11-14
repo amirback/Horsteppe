@@ -137,8 +137,8 @@ export const legal: Record<Lang, LegalDict> = {
           {
             h: "Money",
             p: [
-              "Early access is free. There is no price list because we have not finished measuring what a finished video actually costs.",
-              "When paid plans appear, nothing starts charging you automatically. You will be asked first.",
+              "The price of a video is agreed before work starts.",
+              "Nothing is charged automatically: you confirm the price first.",
             ],
           },
           {
@@ -357,8 +357,8 @@ export const legal: Record<Lang, LegalDict> = {
           {
             h: "Деньги",
             p: [
-              "Ранний доступ бесплатный. Прайса нет, потому что мы ещё не досчитали, во сколько обходится готовый ролик.",
-              "Когда появятся платные планы, ничего не начнёт списываться само. Сначала спросим.",
+              "Стоимость ролика согласуется до начала работы.",
+              "Ничего не списывается автоматически: сначала вы подтверждаете цену.",
             ],
           },
           {
@@ -573,8 +573,8 @@ export const legal: Record<Lang, LegalDict> = {
           {
             h: "Ақша",
             p: [
-              "Ерте қолжетімділік тегін. Бағасы жоқ, себебі дайын ролик қанша тұратынын әлі санап бітірген жоқпыз.",
-              "Ақылы жоспарлар пайда болғанда ештеңе өздігінен алынып қалмайды. Алдымен сұраймыз.",
+              "Ролик құны жұмыс басталғанға дейін келісіледі.",
+              "Ештеңе өздігінен алынбайды: алдымен бағаны сіз растайсыз.",
             ],
           },
           {
