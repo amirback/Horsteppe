@@ -60,6 +60,30 @@ PURPOSE_IMPORTANCE: dict[str, float] = {
     "background": 0.35,
 }
 
+# Сложность движения, которую указал сценарист (решение основателя
+# 2026-11-14): сложные кадры — сильным моделям, лёгкие — дешёвым.
+# Маршрутизатор выбирает уровень модели по visual_importance (от 0.9 —
+# Kling 4.0 / Seedance 2.5, от 0.5 — Kling 3.0 Pro / Seedance 2.0, ниже —
+# Wan 3.0), поэтому сложность переводится в важность. Отдельной колонки в
+# базе не нужно: важность сохраняется и так. Сложные кадры заодно раньше
+# встают в очередь за настоящим видео — им движение нужнее всего.
+MOTION_IMPORTANCE: dict[str, float] = {"complex": 0.92, "medium": 0.70, "simple": 0.35}
+
+
+def shot_importance(purpose: str, motion: str | None) -> float:
+    """Важность кадра: по сложности движения, а без неё — по роли, как раньше.
+
+    Начало и финал ролика не опускаются ниже средних моделей: даже простой
+    кадр там видят все.
+    """
+    base = PURPOSE_IMPORTANCE[purpose]
+    level = MOTION_IMPORTANCE.get(str(motion or "").strip().lower())
+    if level is None:
+        return base
+    if purpose in (HOOK_PURPOSE, CLIMAX_PURPOSE):
+        return max(level, 0.55)
+    return level
+
 # Доля таймлайна, которую в идеале закрывает настоящее видео. Бриф: SMART —
 # около 70%, CINEMATIC — около 90% там, где это оправдано.
 COVERAGE_TARGETS: dict[str, float] = {
@@ -320,8 +344,11 @@ def plan_scene_shots(
                 "motion_requirement": requirement,
                 "first_frame_reference": reference_url,
                 # Важность решает, куда уйдёт дорогая генерация: по ней кадры
-                # выстраиваются в очередь за настоящим видео.
-                "visual_importance": PURPOSE_IMPORTANCE[purpose],
+                # выстраиваются в очередь за настоящим видео и по ней же
+                # маршрутизатор выбирает уровень модели.
+                "visual_importance": shot_importance(
+                    purpose, (authored[i] if i < len(authored) else {}).get("motion"),
+                ),
                 "narrative_importance": 0.9 if (first_of_film or last_of_film) else PURPOSE_IMPORTANCE[purpose],
                 # Кадры одной сцены обязаны выглядеть одним местом.
                 "continuity_group": f"scene-{scene_index}",

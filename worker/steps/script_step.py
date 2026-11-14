@@ -67,8 +67,23 @@ SCENES_SCHEMA = {
                                     "type": "string",
                                     "description": "ENGLISH: what the same recurring characters do in this shot",
                                 },
+                                # Сложность движения выбирает модель видео: сложным
+                                # кадрам — сильные модели, лёгким — дешёвые (решение
+                                # основателя 2026-11-14). Судит сценарист: он знает,
+                                # что происходит в кадре, а механика — нет.
+                                "motion": {
+                                    "type": "string",
+                                    "enum": ["complex", "medium", "simple"],
+                                    "description": (
+                                        "How hard the movement in this shot is for a video model. "
+                                        "'complex': people acting, hands at work, talking faces, fast "
+                                        "action, liquids, a product being turned or used. 'medium': one "
+                                        "subject moving calmly. 'simple': a slow camera move over a still "
+                                        "scene — landscape, interior, product standing still."
+                                    ),
+                                },
                             },
-                            "required": ["framing", "action"],
+                            "required": ["framing", "action", "motion"],
                             "additionalProperties": False,
                         },
                     },

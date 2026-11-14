@@ -471,3 +471,50 @@ def test_product_shots_still_outrank_ordinary_ones():
              and shot_plan.preferred_mode(s) == "image_motion"]
     assert shot_plan.preferred_mode(product) == "real_video"
     assert plain, "хоть один обычный кадр должен был уступить очередь"
+
+
+# ---- Модель по сложности кадра (решение основателя 2026-11-14)
+
+def test_scriptwriter_must_rate_the_motion_of_every_shot():
+    """Без оценки сложности модель выбиралась бы по месту кадра, а не по движению."""
+    from steps import script_step
+
+    for schema in (script_step.SCENES_SCHEMA, script_step.AD_SCENES_SCHEMA):
+        shot = schema["properties"]["scenes"]["items"]["properties"]["shots"]["items"]
+        assert "motion" in shot["required"]
+        assert shot["properties"]["motion"]["enum"] == ["complex", "medium", "simple"]
+
+
+@pytest.mark.parametrize("purpose, motion, expected", [
+    ("action", "complex", 0.92),       # сложное движение в середине — сильная модель
+    ("background", "complex", 0.92),
+    ("action", "medium", 0.70),
+    ("character", "simple", 0.35),     # проезд камеры по неподвижной сцене — дешёвая
+    ("hook", "simple", 0.55),          # начало ролика не уходит на модели фона
+    ("climax", "simple", 0.55),
+    ("hook", "complex", 0.92),
+    ("action", None, 0.80),            # сценарист не оценил — как раньше, по роли
+    ("hook", "", 1.00),
+    ("action", "unknown", 0.80),
+])
+def test_motion_decides_the_importance(purpose, motion, expected):
+    assert shot_plan.shot_importance(purpose, motion) == pytest.approx(expected)
+
+
+def test_motion_picks_the_model_level(monkeypatch):
+    """Сложные кадры — Kling 4.0, средние — Kling 3.0 Pro, лёгкие — Wan 3.0."""
+    import providers
+
+    for name in ("FAL_KEY", "TOGETHER_API_KEY", "REPLICATE_API_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HF_KEY", "id:secret-not-real")
+    authored = [
+        {"framing": "wide shot of the street", "action": "the city stands still", "motion": "simple"},
+        {"framing": "close-up on hands", "action": "barista pours milk into the cup", "motion": "complex"},
+        {"framing": "medium shot", "action": "a cup slowly turns on the counter", "motion": "medium"},
+    ]
+    shots = _plan(duration=10.5, scene_index=1, scene_count=3, authored_shots=authored)
+    models = [providers.choose("video", importance=s["visual_importance"], needs_image_to_video=True).model
+              for s in shots[:3]]
+    assert models == ["alibaba/wan-3.0/image-to-video", "kling-video/v4.0/image-to-video",
+                      "kling-video/v3.0/pro/image-to-video"]
