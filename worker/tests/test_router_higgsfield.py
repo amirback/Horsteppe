@@ -57,7 +57,7 @@ KLING_3_STD = "kling-video/v3.0/std/image-to-video"
 @pytest.mark.parametrize("importance, expected", [
     (1.00, KLING_4),       # крючок
     (0.95, KLING_4),       # кульминация
-    (0.80, KLING_4),       # действие
+    (0.80, KLING_3_PRO),   # действие — с 14.11 не главный кадр
     (0.70, KLING_3_PRO),   # персонаж
     (0.55, KLING_3_PRO),   # второстепенный
     (0.35, WAN_3),         # фон

@@ -185,8 +185,12 @@ REGISTRY: tuple[Capability, ...] = (
 # кадров: крючок 1.0, кульминация 0.95, действие 0.8, персонаж 0.7,
 # второстепенный 0.55, фон 0.35. Внутри уровня — очередь: вторая модель
 # берёт кадр, если первая не прошла отсечку или не приняла задачу.
+#
+# Главные модели — только крючку и кульминации (порог 0.9, решение
+# основателя 2026-11-14). При пороге 0.8 их получало и «действие», и в
+# 30-секундном ролике Kling 4.0 доставался пяти кадрам из шести.
 VIDEO_TIERS: tuple[tuple[float, tuple[str, ...]], ...] = (
-    (0.80, ("kling-video/v4.0/image-to-video", "bytedance/seedance-2.5/image-to-video")),
+    (0.90, ("kling-video/v4.0/image-to-video", "bytedance/seedance-2.5/image-to-video")),
     (0.50, ("kling-video/v3.0/pro/image-to-video", "bytedance/seedance-2.0/image-to-video")),
     (0.00, ("alibaba/wan-3.0/image-to-video", "kling-video/v3.0/std/image-to-video")),
 )
