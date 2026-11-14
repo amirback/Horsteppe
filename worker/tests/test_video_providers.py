@@ -443,3 +443,44 @@ def test_content_rejection_does_not_reach_the_second_model(cfg, monkeypatch, tmp
     """Что отклонил Kling 4.0, отклонит и Seedance — а вызов стоил бы денег."""
     tried = _queue(cfg, monkeypatch, tmp_path, 5.0, video_step.ContentRejected("nsfw"))
     assert tried == [KLING_4]
+
+
+# ---- Длина клипа = длина кадра (2026-11-14): не платить за обрезки
+
+@pytest.mark.parametrize("model, shot_sec, expected", [
+    (KLING_4, 3.2, 4),                                    # вверх до целого
+    (KLING_4, 2.4, 3),                                    # Kling 4.0 не короче 3 с
+    (KLING_4, 5.0, 5),
+    (SEEDANCE_25, 3.0, 4),                                # Seedance не короче 4 с
+    ("alibaba/wan-3.0/image-to-video", 2.0, 2),
+    ("kling-video/v3.0/pro/image-to-video", 3.75, 4),
+])
+def test_clip_is_ordered_for_the_length_of_the_shot(model, shot_sec, expected):
+    assert video_step._clip_seconds(model, shot_sec) == expected
+
+
+def test_fixed_length_models_and_unknown_length_keep_the_old_clip():
+    """Kling 2.5 Turbo принимает только 5 или 10 секунд — четыре он отвергнет."""
+    assert video_step._clip_seconds("kling-video/v2.5-turbo/pro/image-to-video", 3.0) == video_step.HIGGSFIELD_DURATION
+    assert video_step._clip_seconds(KLING_4, None) == video_step.HIGGSFIELD_DURATION
+
+
+def test_shorter_clip_costs_proportionally_less():
+    assert video_step._model_cost(KLING_4, 4) == pytest.approx(0.63 * 4 / 5)
+    assert video_step._model_cost(KLING_4) == pytest.approx(0.63)
+    assert video_step._model_cost("kling-video/v2.5-turbo/pro/image-to-video", 4) == pytest.approx(
+        video_step._model_cost("kling-video/v2.5-turbo/pro/image-to-video"))
+
+
+def test_shot_length_reaches_the_request_and_the_ledger(cfg, hf, monkeypatch, tmp_path):
+    started = {"request_id": "r1", "status": "queued",
+               "status_url": "https://api/requests/r1/status", "cancel_url": "https://api/c"}
+    done = {"status": "completed", "video": {"url": "https://api/clip.mp4"}}
+    http = FakeHttp(posts=[FakeResponse(started)],
+                    gets=[FakeResponse(done), FakeResponse(content=b"real-clip")])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+
+    with video_step.tracking(clip_sec=3.2):
+        result = video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4", KLING_4)
+    assert http.seen_posts[0][2]["duration"] == 4
+    assert result.cost_usd == pytest.approx(0.63 * 4 / 5)

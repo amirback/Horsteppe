@@ -19,6 +19,7 @@ FFmpeg, и это не стоит ничего.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 from contextlib import contextmanager
@@ -387,18 +388,19 @@ _tracking = threading.local()
 
 
 @contextmanager
-def tracking(on_accepted=None, on_status=None, budget_usd=None):
-    """Обработчики задачи кадра и остаток бюджета на него.
+def tracking(on_accepted=None, on_status=None, budget_usd=None, clip_sec=None):
+    """Обработчики задачи кадра, остаток бюджета и длина клипа для него.
 
-    Бюджет передаётся здесь, а не аргументом generate_clip: так очередь
-    моделей узнаёт его, не меняя вызов, на который опираются заглушки тестов.
+    Бюджет и длина передаются здесь, а не аргументами generate_clip: так шаг
+    узнаёт их, не меняя вызов, на который опираются заглушки тестов.
     """
-    previous = getattr(_tracking, "handlers", None), getattr(_tracking, "budget", None)
-    _tracking.handlers, _tracking.budget = (on_accepted, on_status), budget_usd
+    previous = (getattr(_tracking, "handlers", None), getattr(_tracking, "budget", None),
+                getattr(_tracking, "clip_sec", None))
+    _tracking.handlers, _tracking.budget, _tracking.clip_sec = (on_accepted, on_status), budget_usd, clip_sec
     try:
         yield
     finally:
-        _tracking.handlers, _tracking.budget = previous
+        _tracking.handlers, _tracking.budget, _tracking.clip_sec = previous
 
 
 def _notify_accepted(request: ProviderRequest) -> bool:
@@ -447,37 +449,65 @@ def _higgsfield_headers(cfg: Config) -> dict:
 HIGGSFIELD_RESOLUTION = "720p"
 
 
-def _higgsfield_payload(model: str, motion_prompt: str, image_public_url: str) -> dict:
+def _clip_seconds(model: str, shot_sec: float | None) -> int:
+    """Сколько секунд заказывать: столько, сколько кадр идёт в монтаже.
+
+    Раньше клип всегда заказывался на 5 секунд, а кадр в ролике длится 2–5:
+    остаток обрезался, но был оплачен. Длина округляется вверх до целого и
+    зажимается в пределы модели (Seedance — не короче 4 с). Kling 2.5 Turbo
+    и Hailuo принимают только фиксированный набор длительностей — для них,
+    как и без известной длины кадра, прежние HIGGSFIELD_DURATION секунд.
+    """
+    import providers
+
+    cap = next((c for c in providers.REGISTRY if c.provider == "higgsfield" and c.model == model), None)
+    in_tiers = any(model in models for _, models in providers.VIDEO_TIERS)
+    if not shot_sec or cap is None or not in_tiers or not cap.durations_sec:
+        return HIGGSFIELD_DURATION
+    low, high = min(cap.durations_sec), max(cap.durations_sec)
+    return int(min(max(math.ceil(float(shot_sec) - 1e-6), low), high))
+
+
+def _higgsfield_payload(model: str, motion_prompt: str, image_public_url: str,
+                        seconds: int | None = None) -> dict:
     """Поля запроса строго по схеме модели из консоли Higgsfield.
 
     У разных семейств разные поля, и лишнее поле схема может запретить —
     тогда задача отклоняется. Звук выключаем, где он есть: у ролика своя
     озвучка, а звук клипа монтаж всё равно отрезает.
     """
+    seconds = seconds or HIGGSFIELD_DURATION
     payload = {"prompt": motion_prompt, "image_url": image_public_url}
     if model.startswith("kling-video/v4.0"):
-        payload.update(duration=HIGGSFIELD_DURATION, resolution=HIGGSFIELD_RESOLUTION)
+        payload.update(duration=seconds, resolution=HIGGSFIELD_RESOLUTION)
     elif model.startswith("bytedance/seedance"):
-        payload.update(duration=max(HIGGSFIELD_DURATION, 4), resolution=HIGGSFIELD_RESOLUTION,
+        payload.update(duration=max(seconds, 4), resolution=HIGGSFIELD_RESOLUTION,
                        generate_audio=False)
     elif model.startswith("alibaba/wan"):
-        payload.update(duration=HIGGSFIELD_DURATION, resolution=HIGGSFIELD_RESOLUTION,
+        payload.update(duration=seconds, resolution=HIGGSFIELD_RESOLUTION,
                        generate_audio=False)
     elif model.startswith(("kling-video/v3", "kling-video/v2.6")):
-        payload.update(duration=HIGGSFIELD_DURATION, cfg_scale=HIGGSFIELD_CFG_SCALE, sound="off")
+        payload.update(duration=seconds, cfg_scale=HIGGSFIELD_CFG_SCALE, sound="off")
     else:
-        payload.update(duration=HIGGSFIELD_DURATION, cfg_scale=HIGGSFIELD_CFG_SCALE)
+        payload.update(duration=seconds, cfg_scale=HIGGSFIELD_CFG_SCALE)
         if HIGGSFIELD_NEGATIVE.strip():
             payload["negative_prompt"] = HIGGSFIELD_NEGATIVE.strip()
     return payload
 
 
-def _model_cost(model: str) -> float:
-    """Цена вызова именно этой модели — в журнал затрат, а не общая цифра Kling."""
+def _model_cost(model: str, seconds: int | None = None) -> float:
+    """Цена вызова именно этой модели и длины — в журнал затрат.
+
+    В реестре цена клипа 5 с; у моделей уровней оплата посекундная, поэтому
+    короткий клип стоит пропорционально меньше.
+    """
     import providers
 
     for cap in providers.REGISTRY:
         if cap.provider == "higgsfield" and cap.model == model:
+            in_tiers = any(model in models for _, models in providers.VIDEO_TIERS)
+            if seconds and in_tiers:
+                return round(cap.cost_usd * seconds / 5.0, 4)
             return cap.cost_usd
     return COSTS["higgsfield_video_per_clip"]
 
@@ -530,7 +560,8 @@ def _via_higgsfield(
     # Модель приходит от маршрутизатора. Настройка из окружения остаётся
     # запасным вариантом, а не единственным, как было раньше.
     model = (model or cfg.higgsfield_video_model).strip("/")
-    payload = _higgsfield_payload(model, motion_prompt, image_public_url)
+    seconds = _clip_seconds(model, getattr(_tracking, "clip_sec", None))
+    payload = _higgsfield_payload(model, motion_prompt, image_public_url, seconds)
 
     # До ответа на постановку денег не взяли: сбой здесь — обычный отказ,
     # и цепочка вправе попробовать соседа.
@@ -547,7 +578,7 @@ def _via_higgsfield(
         status_url=started.get("status_url") or _status_url(started["request_id"]),
         cancel_url=started.get("cancel_url"),
         status=started.get("status") or "queued",
-        cost_usd=_model_cost(model),
+        cost_usd=_model_cost(model, seconds),
     )
     recorded = _notify_accepted(request)
     return _collect_higgsfield(cfg, request, out_path, payload, recorded=recorded, first=started)

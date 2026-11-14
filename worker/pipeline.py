@@ -167,8 +167,13 @@ def _clip_tracking(db: Db, guard, project_id: str, shot: dict, index: int):
     # Остаток бюджета нужен очереди внутри уровня: запасная модель (Seedance
     # 2.5 за Kling 4.0) дороже выбранной и берёт кадр, только если деньги на
     # неё есть. Проект без потолка ограничений не ставит.
+    # Длина клипа — сколько кадр идёт в монтаже: `generation_duration` для
+    # этого и заведён в плане кадров. Заказывать 5 секунд под кадр в 3 — платить
+    # за обрезки.
+    clip_sec = float(shot.get("generation_duration") or shot.get("timeline_duration") or 0) or None
     return video_step.tracking(on_accepted=accepted, on_status=status,
-                               budget_usd=guard.spendable_usd if guard.has_ceiling else math.inf)
+                               budget_usd=guard.spendable_usd if guard.has_ceiling else math.inf,
+                               clip_sec=clip_sec)
 
 
 def _forget_request(db: Db, shot: dict, error: Exception | None = None) -> None:
