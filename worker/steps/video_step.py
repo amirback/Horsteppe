@@ -85,14 +85,16 @@ def _chain_for(cfg: Config, provider: str | None) -> list[str]:
 def generate_clip(
     cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path,
     model: str | None = None, cost_usd: float | None = None,
-    provider: str | None = None,
+    provider: str | None = None, budget_usd: float | None = None,
 ) -> ClipResult:
     """Animate an image into a ~5s clip. `image_public_url` must be publicly
     reachable (we pass the Supabase Storage public URL). Returns cost in USD.
 
     `provider`, `model` и `cost_usd` приходят от маршрутизатора: на важный
     кадр он берёт модель посильнее, на фоновый — подешевле. Без них шаг
-    работает как раньше, по настройке из окружения.
+    работает как раньше, по настройке из окружения. `budget_usd` — остаток
+    бюджета на кадр: в его пределах запасная модель уровня может быть дороже
+    выбранной.
     """
     # Защита в глубину: конвейер и так не зовёт этот шаг в безопасном режиме.
     # Оценка передаётся до вызова — потолок проекта обязан успеть отказать,
@@ -114,7 +116,7 @@ def generate_clip(
         hint = model if current == addressed_to else None
         try:
             if current == "higgsfield":
-                return _via_higgsfield(cfg, image_public_url, motion_prompt, out_path, hint)
+                return _higgsfield_in_order(cfg, image_public_url, motion_prompt, out_path, hint, budget_usd)
             if current == "replicate":
                 return _via_replicate(cfg, image_public_url, motion_prompt, out_path)
             return _via_fal(cfg, image_public_url, motion_prompt, out_path, hint, price)
@@ -430,6 +432,78 @@ def _higgsfield_headers(cfg: Config) -> dict:
     }
 
 
+# Разрешение генерации для моделей, где его можно выбрать (Kling 4.0, Seedance,
+# Wan). 720p: монтаж всё равно растягивает клип до кадра 1080×1920, а клип
+# в 720p стоит на треть–втрое дешевле, чем в 1080p. Цены моделей в
+# providers.REGISTRY посчитаны именно для этого разрешения: меняя его,
+# поменяйте и их.
+HIGGSFIELD_RESOLUTION = "720p"
+
+
+def _higgsfield_payload(model: str, motion_prompt: str, image_public_url: str) -> dict:
+    """Поля запроса строго по схеме модели из консоли Higgsfield.
+
+    У разных семейств разные поля, и лишнее поле схема может запретить —
+    тогда задача отклоняется. Звук выключаем, где он есть: у ролика своя
+    озвучка, а звук клипа монтаж всё равно отрезает.
+    """
+    payload = {"prompt": motion_prompt, "image_url": image_public_url}
+    if model.startswith("kling-video/v4.0"):
+        payload.update(duration=HIGGSFIELD_DURATION, resolution=HIGGSFIELD_RESOLUTION)
+    elif model.startswith("bytedance/seedance"):
+        payload.update(duration=max(HIGGSFIELD_DURATION, 4), resolution=HIGGSFIELD_RESOLUTION,
+                       generate_audio=False)
+    elif model.startswith("alibaba/wan"):
+        payload.update(duration=HIGGSFIELD_DURATION, resolution=HIGGSFIELD_RESOLUTION,
+                       generate_audio=False)
+    elif model.startswith(("kling-video/v3", "kling-video/v2.6")):
+        payload.update(duration=HIGGSFIELD_DURATION, cfg_scale=HIGGSFIELD_CFG_SCALE, sound="off")
+    else:
+        payload.update(duration=HIGGSFIELD_DURATION, cfg_scale=HIGGSFIELD_CFG_SCALE)
+        if HIGGSFIELD_NEGATIVE.strip():
+            payload["negative_prompt"] = HIGGSFIELD_NEGATIVE.strip()
+    return payload
+
+
+def _model_cost(model: str) -> float:
+    """Цена вызова именно этой модели — в журнал затрат, а не общая цифра Kling."""
+    import providers
+
+    for cap in providers.REGISTRY:
+        if cap.provider == "higgsfield" and cap.model == model:
+            return cap.cost_usd
+    return COSTS["higgsfield_video_per_clip"]
+
+
+def _higgsfield_in_order(
+    cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path, model: str | None,
+    budget_usd: float | None = None,
+) -> ClipResult:
+    """Выбранная модель, затем запасная из её уровня (providers.VIDEO_TIERS).
+
+    К запасной идём, только если задача НЕ принята: до принятия денег не
+    взяли. Отказ по содержанию и принятая, но не отданная задача прерывают
+    очередь — иначе за кадр платили бы дважды. Запасная дороже выбранной
+    берётся, только если её покрывает `budget_usd` — остаток бюджета кадра.
+    """
+    import providers
+
+    first = (model or cfg.higgsfield_video_model).strip("/")
+    queue = providers.next_models("higgsfield", first, budget_usd=budget_usd, duration_sec=HIGGSFIELD_DURATION)
+    order = [first] + [c.model for c in queue]
+    errors: list[str] = []
+    for position, name in enumerate(order, start=1):
+        try:
+            return _via_higgsfield(cfg, image_public_url, motion_prompt, out_path, name)
+        except (ContentRejected, AcceptedButNotDelivered):
+            raise
+        except VideoError as e:
+            errors.append(f"{name}: {e}")
+            if position < len(order):
+                log.warning("Higgsfield %s не принял задачу, пробую %s: %s", name, order[position], e)
+    raise VideoError(" | ".join(errors))
+
+
 def _via_higgsfield(
     cfg: Config, image_public_url: str, motion_prompt: str, out_path: Path,
     model: str | None = None,
@@ -446,18 +520,10 @@ def _via_higgsfield(
     if not cfg.higgsfield_credential:
         raise VideoError("HF_KEY (или HF_API_KEY и HF_API_SECRET) не задан")
 
-    # Модель приходит от маршрутизатора: крючку достаётся pro, фону —
-    # standard. Настройка из окружения остаётся запасным вариантом, а не
-    # единственным, как было раньше.
+    # Модель приходит от маршрутизатора. Настройка из окружения остаётся
+    # запасным вариантом, а не единственным, как было раньше.
     model = (model or cfg.higgsfield_video_model).strip("/")
-    payload = {
-        "prompt": motion_prompt,
-        "image_url": image_public_url,
-        "duration": HIGGSFIELD_DURATION,
-        "cfg_scale": HIGGSFIELD_CFG_SCALE,
-    }
-    if HIGGSFIELD_NEGATIVE.strip():
-        payload["negative_prompt"] = HIGGSFIELD_NEGATIVE.strip()
+    payload = _higgsfield_payload(model, motion_prompt, image_public_url)
 
     # До ответа на постановку денег не взяли: сбой здесь — обычный отказ,
     # и цепочка вправе попробовать соседа.
@@ -474,7 +540,7 @@ def _via_higgsfield(
         status_url=started.get("status_url") or _status_url(started["request_id"]),
         cancel_url=started.get("cancel_url"),
         status=started.get("status") or "queued",
-        cost_usd=COSTS["higgsfield_video_per_clip"],
+        cost_usd=_model_cost(model),
     )
     recorded = _notify_accepted(request)
     return _collect_higgsfield(cfg, request, out_path, payload, recorded=recorded, first=started)

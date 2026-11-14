@@ -362,3 +362,84 @@ def test_fal_result_reports_the_routed_model(cfg, monkeypatch, tmp_path):
     assert done.provider == "fal"
     assert done.model.endswith("v2.1/standard/image-to-video")
     assert done.cost_usd == 0.35
+
+
+# ---- Уровни моделей (2026-11-14): поля запроса, цена в журнал, очередь в уровне
+
+KLING_4 = "kling-video/v4.0/image-to-video"
+SEEDANCE_25 = "bytedance/seedance-2.5/image-to-video"
+
+
+@pytest.mark.parametrize("model, allowed", [
+    (KLING_4, {"prompt", "image_url", "duration", "resolution"}),
+    (SEEDANCE_25, {"prompt", "image_url", "duration", "resolution", "generate_audio"}),
+    ("bytedance/seedance-2.0/image-to-video", {"prompt", "image_url", "duration", "resolution", "generate_audio"}),
+    ("alibaba/wan-3.0/image-to-video", {"prompt", "image_url", "duration", "resolution", "generate_audio"}),
+    ("kling-video/v3.0/pro/image-to-video", {"prompt", "image_url", "duration", "cfg_scale", "sound"}),
+])
+def test_each_model_gets_only_its_own_fields(model, allowed):
+    """Лишнее поле схема модели может запретить — задача была бы отклонена."""
+    payload = video_step._higgsfield_payload(model, "slow push in", "https://img/p.png")
+    assert set(payload) <= allowed, set(payload) - allowed
+    assert payload["image_url"] == "https://img/p.png"
+    assert payload.get("generate_audio", False) is False, "у ролика своя озвучка"
+    assert payload.get("sound", "off") == "off"
+    if "resolution" in payload:
+        assert payload["resolution"] == "720p"
+    if model.startswith("bytedance/seedance"):
+        assert payload["duration"] >= 4, "Seedance короче 4 секунд не принимает"
+
+
+def test_old_kling_keeps_its_negative_prompt():
+    payload = video_step._higgsfield_payload("kling-video/v2.5-turbo/pro/image-to-video", "p", "https://i/p.png")
+    assert "negative_prompt" in payload and "cfg_scale" in payload
+
+
+def test_ledger_gets_the_price_of_the_model_that_ran(cfg, hf, monkeypatch, tmp_path):
+    started = {"request_id": "r1", "status": "queued",
+               "status_url": "https://api/requests/r1/status", "cancel_url": "https://api/c"}
+    done = {"status": "completed", "video": {"url": "https://api/clip.mp4"}}
+    http = FakeHttp(posts=[FakeResponse(started)],
+                    gets=[FakeResponse(done), FakeResponse(content=b"real-clip")])
+    monkeypatch.setattr(video_step.httpx, "Client", lambda **kw: http)
+
+    result = video_step._via_higgsfield(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4", KLING_4)
+    assert result.model == KLING_4
+    assert result.cost_usd == pytest.approx(0.63)
+    assert http.seen_posts[0][0].endswith("/" + KLING_4)
+
+
+def _queue(cfg, monkeypatch, tmp_path, budget, failure):
+    monkeypatch.setenv("VIDEO_PROVIDER", "higgsfield")
+    monkeypatch.setenv("HF_KEY", "id:secret-not-real")
+    tried = []
+
+    def fake(cfg_, image_url, prompt, out_path, model=None):
+        tried.append(model)
+        if model == KLING_4:
+            raise failure
+        return video_step.ClipResult("higgsfield", model, 1.32)
+
+    monkeypatch.setattr(video_step, "_via_higgsfield", fake)
+    try:
+        video_step.generate_clip(cfg(), "https://img/p.png", "push in", tmp_path / "c.mp4",
+                                 provider="higgsfield", model=KLING_4, cost_usd=0.63, budget_usd=budget)
+    except video_step.VideoError:
+        pass
+    return tried
+
+
+def test_seedance_takes_the_shot_when_kling_4_refuses_and_budget_allows(cfg, monkeypatch, tmp_path):
+    tried = _queue(cfg, monkeypatch, tmp_path, 5.0, video_step.VideoError("перегрузка"))
+    assert tried == [KLING_4, SEEDANCE_25]
+
+
+def test_no_seedance_when_the_budget_does_not_cover_it(cfg, monkeypatch, tmp_path):
+    assert _queue(cfg, monkeypatch, tmp_path, 1.0, video_step.VideoError("перегрузка")) == [KLING_4]
+    assert _queue(cfg, monkeypatch, tmp_path, None, video_step.VideoError("перегрузка")) == [KLING_4]
+
+
+def test_content_rejection_does_not_reach_the_second_model(cfg, monkeypatch, tmp_path):
+    """Что отклонил Kling 4.0, отклонит и Seedance — а вызов стоил бы денег."""
+    tried = _queue(cfg, monkeypatch, tmp_path, 5.0, video_step.ContentRejected("nsfw"))
+    assert tried == [KLING_4]
