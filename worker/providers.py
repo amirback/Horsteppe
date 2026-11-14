@@ -137,7 +137,96 @@ REGISTRY: tuple[Capability, ...] = (
         quality_prior=0.78, reliability_prior=0.85, latency_prior_sec=150.0,
         key_env="HF_KEY",
     ),
+    # Модели по уровням — решение основателя (2026-11-14). Всё через тот же
+    # API Higgsfield; openapi.json выше устарел. Каталог, поля и цены —
+    # console.higgsfield.ai/models/<модель>/api-reference (проверено
+    # 2026-11-14). cost_usd — клип 5 с в том разрешении, которое задаёт
+    # video_step: ставка за секунду × 5.
+    Capability(
+        provider="higgsfield", model="kling-video/v4.0/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(3.0, 30.0), max_side=1920, cost_usd=0.63,  # $0.1257/с, 720p
+        quality_prior=0.97, reliability_prior=0.88, latency_prior_sec=300.0, key_env="HF_KEY",
+    ),
+    Capability(
+        provider="higgsfield", model="bytedance/seedance-2.5/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(4.0, 30.0), max_side=1920, cost_usd=1.32,  # $0.2647/с, 720p
+        quality_prior=0.97, reliability_prior=0.85, latency_prior_sec=300.0, key_env="HF_KEY",
+    ),
+    Capability(
+        provider="higgsfield", model="kling-video/v3.0/pro/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(3.0, 15.0), max_side=1920, cost_usd=0.48,  # $0.0962/с, 1080p
+        quality_prior=0.92, reliability_prior=0.88, latency_prior_sec=240.0, key_env="HF_KEY",
+    ),
+    Capability(
+        provider="higgsfield", model="bytedance/seedance-2.0/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(4.0, 15.0), max_side=1920, cost_usd=0.87,  # $0.1735/с, 720p
+        quality_prior=0.90, reliability_prior=0.85, latency_prior_sec=300.0, key_env="HF_KEY",
+    ),
+    Capability(
+        provider="higgsfield", model="alibaba/wan-3.0/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(2.0, 30.0), max_side=1920, cost_usd=0.375,  # $0.075/с, 720p
+        quality_prior=0.84, reliability_prior=0.85, latency_prior_sec=240.0, key_env="HF_KEY",
+    ),
+    Capability(
+        provider="higgsfield", model="kling-video/v3.0/std/image-to-video", kind="video",
+        supports_image_to_video=True, supports_reference_image=True, supports_first_frame=True,
+        durations_sec=(3.0, 15.0), max_side=1920, cost_usd=0.36,  # $0.0714/с, 720p
+        quality_prior=0.85, reliability_prior=0.88, latency_prior_sec=200.0, key_env="HF_KEY",
+    ),
 )
+
+# Уровни видеомоделей по важности кадра — решение основателя (2026-11-14):
+# главным кадрам главные модели, остальным — дешевле. Важность задаёт план
+# кадров: крючок 1.0, кульминация 0.95, действие 0.8, персонаж 0.7,
+# второстепенный 0.55, фон 0.35. Внутри уровня — очередь: вторая модель
+# берёт кадр, если первая не прошла отсечку или не приняла задачу.
+VIDEO_TIERS: tuple[tuple[float, tuple[str, ...]], ...] = (
+    (0.80, ("kling-video/v4.0/image-to-video", "bytedance/seedance-2.5/image-to-video")),
+    (0.50, ("kling-video/v3.0/pro/image-to-video", "bytedance/seedance-2.0/image-to-video")),
+    (0.00, ("alibaba/wan-3.0/image-to-video", "kling-video/v3.0/std/image-to-video")),
+)
+
+
+def video_order(importance: float) -> list[str]:
+    """Модели для кадра: свой уровень, затем уровни ниже — на случай, когда
+    бюджет не тянет свой. Выше своего уровня кадр не поднимается: фон не
+    получает модель крючка."""
+    out: list[str] = []
+    for floor, models in VIDEO_TIERS:
+        if out or importance >= floor - 1e-9:
+            out += models
+    return out
+
+
+def next_models(provider: str, model: str, budget_usd: float | None = None,
+                duration_sec: float | None = None) -> list[Capability]:
+    """Запасные модели после `model` — остаток её уровня, по очереди.
+
+    `budget_usd` — сколько можно потратить на этот кадр. Без него запас не
+    дороже самой `model`: вызов без бюджета не вправе потратить больше, чем
+    ему разрешили.
+    """
+    tier = next((models for _, models in VIDEO_TIERS if model in models), ())
+    caps = {c.model: c for c in REGISTRY if c.provider == provider and c.kind == "video"}
+    if model not in caps or not tier:
+        return []
+    limit = caps[model].cost_usd if budget_usd is None else budget_usd
+    out = []
+    for name in tier[tier.index(model) + 1:]:
+        cap = caps.get(name)
+        if cap is None or not has_key(cap) or cap.cost_usd > limit + 1e-9:
+            continue
+        if duration_sec and cap.durations_sec and not (
+            min(cap.durations_sec) <= duration_sec <= max(cap.durations_sec)
+        ):
+            continue
+        out.append(cap)
+    return out
 
 
 def has_key(capability: Capability) -> bool:
@@ -236,6 +325,15 @@ def choose(
     if not pool:
         log.info("[ROUTER] %s: пригодных моделей нет (%s)", shot_label or kind, filters)
         return None
+
+    if kind == "video":
+        by_model = {c.model: c for c in pool}
+        for name in video_order(importance):
+            if name in by_model:
+                best = by_model[name]
+                log.info("[ROUTER] %s → %s/%s (уровень по важности %.2f, $%.3f за вызов); рассмотрено %d",
+                         shot_label or kind, best.provider, best.model, importance, best.cost_usd, len(pool))
+                return best
 
     ranked = sorted(pool, key=lambda c: (-score(c, importance), c.cost_per_usable))
     best = ranked[0]

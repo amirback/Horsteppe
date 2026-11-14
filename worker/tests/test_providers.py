@@ -130,8 +130,12 @@ class TestRegistrySanity(WithKey):
             self.assertTrue(0 < cap.reliability_prior <= 1, cap.model)
 
     def test_registry_stays_small(self) -> None:
-        """ТЗ §15 прямо запрещает заводить двадцать провайдеров впрок."""
-        self.assertLessEqual(len(providers.REGISTRY), 8)
+        """ТЗ §15 прямо запрещает заводить двадцать провайдеров впрок.
+
+        Потолок поднят с 8 до 14 решением основателя (2026-11-14): шесть
+        моделей Higgsfield по уровням важности кадра. Каждая — с проверенной
+        схемой запроса и ценой, а не «на всякий случай»."""
+        self.assertLessEqual(len(providers.REGISTRY), 14)
 
 
 if __name__ == "__main__":

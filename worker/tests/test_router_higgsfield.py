@@ -47,14 +47,56 @@ def test_router_finds_a_model_with_only_higgsfield_key(only_higgsfield):
     assert choice.provider == "higgsfield"
 
 
-def test_important_shot_gets_the_pro_model(only_higgsfield):
-    choice = providers.choose("video", importance=1.0, needs_image_to_video=True)
-    assert "pro" in choice.model, f"на крючок взяли {choice.model}"
+KLING_4 = "kling-video/v4.0/image-to-video"
+SEEDANCE_25 = "bytedance/seedance-2.5/image-to-video"
+KLING_3_PRO = "kling-video/v3.0/pro/image-to-video"
+WAN_3 = "alibaba/wan-3.0/image-to-video"
+KLING_3_STD = "kling-video/v3.0/std/image-to-video"
 
 
-def test_background_shot_gets_the_cheaper_model(only_higgsfield):
-    choice = providers.choose("video", importance=0.0, needs_image_to_video=True)
-    assert choice.cost_usd < 0.35, f"на фон взяли дорогую {choice.model} за ${choice.cost_usd}"
+@pytest.mark.parametrize("importance, expected", [
+    (1.00, KLING_4),       # крючок
+    (0.95, KLING_4),       # кульминация
+    (0.80, KLING_4),       # действие
+    (0.70, KLING_3_PRO),   # персонаж
+    (0.55, KLING_3_PRO),   # второстепенный
+    (0.35, WAN_3),         # фон
+])
+def test_shot_gets_the_model_of_its_level(only_higgsfield, importance, expected):
+    """Уровни основателя (2026-11-14): главным кадрам — главные модели."""
+    choice = providers.choose("video", importance=importance, needs_image_to_video=True)
+    assert choice.model == expected
+
+
+def test_background_shot_is_cheaper_than_the_hook(only_higgsfield):
+    hook = providers.choose("video", importance=1.0, needs_image_to_video=True)
+    background = providers.choose("video", importance=0.0, needs_image_to_video=True)
+    assert background.cost_usd < hook.cost_usd
+
+
+def test_background_never_climbs_to_the_hook_models(only_higgsfield):
+    """Сколько бы денег ни было, фон не получает модель крючка."""
+    choice = providers.choose("video", importance=0.35, needs_image_to_video=True, affordable_usd=100.0)
+    assert choice.model not in (KLING_4, SEEDANCE_25)
+
+
+def test_short_budget_steps_down_a_level(only_higgsfield):
+    """На Kling 4.0 не хватает — крючок получает модель уровнем ниже, а не фото."""
+    choice = providers.choose("video", importance=1.0, needs_image_to_video=True, affordable_usd=0.50)
+    assert choice.model == KLING_3_PRO
+
+
+def test_second_model_of_the_level_only_within_budget(only_higgsfield):
+    """Seedance 2.5 дороже Kling 4.0: запасом она становится, только если бюджет кадра её покрывает."""
+    assert [c.model for c in providers.next_models("higgsfield", KLING_4, budget_usd=5.0)] == [SEEDANCE_25]
+    assert providers.next_models("higgsfield", KLING_4, budget_usd=1.0) == []
+    assert providers.next_models("higgsfield", KLING_4) == [], "без бюджета — не дороже выбранной"
+    assert [c.model for c in providers.next_models("higgsfield", WAN_3)] == [KLING_3_STD]
+
+
+def test_old_models_have_no_queue(only_higgsfield):
+    """Kling 2.5 Turbo вне уровней: после его отказа цепочка идёт к следующему провайдеру, как раньше."""
+    assert providers.next_models("higgsfield", "kling-video/v2.5-turbo/pro/image-to-video", budget_usd=5.0) == []
 
 
 def test_hailuo_is_refused_at_five_seconds(only_higgsfield):
