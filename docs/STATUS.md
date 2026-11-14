@@ -71,6 +71,8 @@
 | Маршрутизатор по важности кадра: главные — Kling 4.0 → Seedance 2.5, обычные — Kling 3.0 Pro → Seedance 2.0, фон — Wan 3.0 → Kling 3.0 Standard | mac | `VERIFIED` | 2026-11-14 | `pytest tests/test_providers.py tests/test_router_higgsfield.py -q` | 30 passed: уровень по важности; при нехватке бюджета — уровень ниже; фон не поднимается до моделей крючка |
 | Поля запроса и цена каждой модели; запасная модель уровня в пределах бюджета кадра | mac | `VERIFIED` | 2026-11-14 | `pytest tests/ -q` | **447 passed, 12 subtests passed за 212 с** |
 | Настоящие клипы Kling 4.0, Seedance 2.5/2.0, Kling 3.0, Wan 3.0 через Higgsfield | Higgsfield API | `IMPLEMENTED_UNTESTED` | 2026-11-14 | — | Схемы и цены взяты из консоли Higgsfield (`console.higgsfield.ai/models/<модель>/api-reference`); платный вызов не делался — деньги тратит основатель. Kling 4.0 в 720p ≈ $0.63 за клип 5 с |
+| Главные модели — только крючку и кульминации; клип заказывается на длину кадра | mac | `VERIFIED` | 2026-11-14 | `pytest tests/ -q` | **456 passed, 12 subtests passed за 210 с**. Ветка `wave1/cheaper-clips` |
+| Расчётная генерация ролика по ценам Higgsfield (план кадров по шаблонному сценарию) | mac | `IMPLEMENTED_UNTESTED` | 2026-11-14 | план кадров + маршрутизатор + `_clip_seconds` без сети | 15 с: $1.74 · 30 с: $2.46 (24 с генерации вместо 30) · 60 с: $4.21 (42 с вместо 70). Настоящий сценарий нейросети может дать другое число кадров |
 | **Сайт продукта** | | | | | |
 | Сборка сайта | mac | `VERIFIED` | 2026-09-05 | `npm run build` | ✓ 4 страницы, статика, 116 kB |
 | Публикация | vercel | `VERIFIED` | 2026-09-05 | `curl -o /dev/null -w "%{http_code}"` | `200` |
