@@ -41,6 +41,29 @@ class TtsError(Exception):
     pass
 
 
+# Буквы казахского алфавита, которых нет в русском. Сценарий пишется на языке
+# темы, поэтому язык озвучки виден по самому тексту.
+KAZAKH_LETTERS = frozenset("әғқңөұүһіӘҒҚҢӨҰҮҺІ")
+
+
+def tts_model(cfg: Config, text: str) -> str:
+    """Модель озвучки под язык текста.
+
+    Модель по умолчанию (eleven_multilingual_v2) казахского не знает и читает
+    его с чужим произношением. Для казахского текста — отдельная модель.
+    """
+    if any(ch in KAZAKH_LETTERS for ch in text):
+        return getattr(cfg, "elevenlabs_tts_model_kk", "") or cfg.elevenlabs_tts_model
+    return cfg.elevenlabs_tts_model
+
+
+def _voice_settings(model: str) -> dict:
+    # У eleven_v3 стабильность — три положения: Creative 0.0, Natural 0.5,
+    # Robust 1.0. 0.5 — ближайшее к прежним 0.45 и допустимо при любом из них.
+    stability = 0.5 if model.startswith("eleven_v3") else 0.45
+    return {"stability": stability, "similarity_boost": 0.75}
+
+
 def synthesize(cfg: Config, text: str, out_path: Path) -> float:
     """Generate an mp3 voice-over for `text`, save to out_path.
     Returns the estimated cost in USD."""
@@ -48,10 +71,11 @@ def synthesize(cfg: Config, text: str, out_path: Path) -> float:
         return safe_mode.placeholder_voice(text, out_path)
 
     url = f"{API_BASE}/text-to-speech/{cfg.elevenlabs_voice_id}"
+    model = tts_model(cfg, text)
     payload = {
         "text": text,
-        "model_id": cfg.elevenlabs_tts_model,
-        "voice_settings": {"stability": 0.45, "similarity_boost": 0.75},
+        "model_id": model,
+        "voice_settings": _voice_settings(model),
     }
     headers = {"xi-api-key": cfg.elevenlabs_api_key}
 

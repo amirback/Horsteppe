@@ -81,6 +81,8 @@
 | То же на настоящем Higgsfield | Higgsfield API | `IMPLEMENTED_UNTESTED` | 2026-11-17 | — | Поведение взято из docs.higgsfield.ai («Idempotent requests», «Billing and retention», «Errors»); живой вызов не делался |
 | Кадры в формате проекта: сценарий просит 16:9 / 1:1 / 4:5 вместо всегда «vertical 9:16», Pollinations, Together, fal и заглушка рисуют в нужных пропорциях. Было: ролик 16:9 собирался из вертикальных кадров, монтаж отрезал больше половины | mac | `VERIFIED` | 2026-11-17 | `pytest tests/ -q` | **514 passed, 12 subtests passed за 257 с**; 16 новых тестов в `test_frame_format.py` |
 | Какой размер отдаёт Pollinations на 1024×576, 768×768, 704×880 | Pollinations | `IMPLEMENTED_UNTESTED` | 2026-11-17 | — | Для 9:16 проверено 11.09 (всегда 576×1024). Другие форматы живым запросом не проверены; монтаж в любом случае доводит кадр до формата |
+| Казахская озвучка: текст с буквами ә, ғ, қ, ң, ө, ұ, ү, һ, і идёт в `ELEVENLABS_TTS_MODEL_KK` (по умолчанию `eleven_v3`); прежняя `eleven_multilingual_v2` казахского не знает. Русский и английский — без изменений | mac | `VERIFIED` | 2026-11-18 | `pytest tests/ -q` | **522 passed, 12 subtests passed за 250 с**; 8 новых тестов в `test_tts_language.py` |
+| Звучание `eleven_v3` на казахском | ElevenLabs API | `IMPLEMENTED_UNTESTED` | 2026-11-18 | — | Платный вызов не делался. Нужна вычитка носителем на первом ролике |
 | **Сайт продукта** | | | | | |
 | Сборка сайта | mac | `VERIFIED` | 2026-09-05 | `npm run build` | ✓ 4 страницы, статика, 116 kB |
 | Публикация | vercel | `VERIFIED` | 2026-09-05 | `curl -o /dev/null -w "%{http_code}"` | `200` |

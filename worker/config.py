@@ -91,6 +91,12 @@ class Config:
     elevenlabs_tts_model: str = field(
         default_factory=lambda: os.environ.get("ELEVENLABS_TTS_MODEL", "eleven_multilingual_v2")
     )
+    # Модель для казахского текста. eleven_multilingual_v2 знает 29 языков,
+    # казахского среди них нет — читает его с чужим произношением. eleven_v3
+    # казахский знает. Выбор по тексту — tts_step.tts_model.
+    elevenlabs_tts_model_kk: str = field(
+        default_factory=lambda: os.environ.get("ELEVENLABS_TTS_MODEL_KK", "eleven_v3").strip()
+    )
 
     # То же самое: в безопасном режиме кадры рисует FFmpeg, ключ не нужен.
     fal_key: str = field(default_factory=lambda: os.environ.get("FAL_KEY", "").strip())
