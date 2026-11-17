@@ -37,7 +37,19 @@ class Config:
     # Empty string allowed here — validated in __post_init__ only when actually needed
     # (SCRIPT_MODE=mock doesn't call Anthropic at all, so no key required).
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "").strip())
-    llm_model: str = field(default_factory=lambda: os.environ.get("LLM_MODEL", "claude-opus-5"))
+    # «Режиссёр»: пишет сценарий, делит его на кадры и оценивает сложность
+    # движения каждого кадра — от этой оценки зависит, какая видеомодель
+    # получит кадр. Fable 5.2 — языковая модель Anthropic (Claude), видео она
+    # не генерирует; это решение основателя от 2026-11-16: самая сильная
+    # модель на месте, где ошибка стоит дороже всего — плохой сценарий
+    # портит ролик целиком, а стоит вызов центы на фоне видео.
+    llm_model: str = field(default_factory=lambda: os.environ.get("LLM_MODEL", "claude-fable-5-2"))
+    # Глубина размышления режиссёра (output_config.effort): low, medium,
+    # high, xhigh, max. Сценарий на 3–5 сцен — не исследовательская задача:
+    # medium даёт качество без лишних минут ожидания и токенов.
+    llm_effort: str = field(
+        default_factory=lambda: os.environ.get("LLM_EFFORT", "medium").strip().lower()
+    )
     # Ключ уровня организации не привязан к рабочему пространству, и вызов без
     # этого идентификатора отклоняется с 400. Ключ, созданный внутри рабочего
     # пространства, ничего такого не требует — поле остаётся пустым.
@@ -278,6 +290,10 @@ class Config:
             raise RuntimeError(f"VIDEO_MODE must be 'kenburns' or 'provider', got {self.video_mode!r}")
         if self.script_mode not in ("llm", "mock"):
             raise RuntimeError(f"SCRIPT_MODE must be 'llm' or 'mock', got {self.script_mode!r}")
+        if self.llm_effort not in ("low", "medium", "high", "xhigh", "max"):
+            raise RuntimeError(
+                f"LLM_EFFORT must be one of low / medium / high / xhigh / max, got {self.llm_effort!r}"
+            )
         known = ("fal", "together", "pollinations")
         unknown = [x for x in self.image_providers if x not in known]
         if unknown or not self.image_providers:
@@ -352,9 +368,44 @@ class Config:
             raise RuntimeError(f"MUSIC_FILE points to a missing file: {self.music_file}")
 
 
+# Цены моделей Anthropic, $ за миллион токенов: (вход, выход). Источник —
+# официальный прайс (сверено 2026-11-16). Один общий тариф на все модели
+# врал бы: Fable 5.2 стоит $8/$40, Opus 5.5 — $4/$20, Haiku 5.5 — $0.10/$0.50,
+# и журнал затрат расходился бы с кошельком в разы. Токены размышления
+# входят в выходные — их считает сам провайдер в usage.output_tokens.
+ANTHROPIC_PRICES: dict[str, tuple[float, float]] = {
+    "claude-fable-5-2": (8.0, 40.0),
+    "claude-fable-5-1": (10.0, 50.0),
+    "claude-fable-5": (10.0, 50.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-4-7": (5.0, 25.0),
+    "claude-opus-4-6": (5.0, 25.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+
+
+def anthropic_price(model: str) -> tuple[float, float]:
+    """Цена модели за миллион токенов: (вход, выход).
+
+    Известная модель берётся из таблицы. Для неизвестной — запасной тариф из
+    COST_ANTHROPIC_*: лучше приблизительная запись в журнале, чем никакой.
+    """
+    known = ANTHROPIC_PRICES.get((model or "").strip())
+    if known:
+        return known
+    return COSTS["anthropic_input_per_mtok"], COSTS["anthropic_output_per_mtok"]
+
+
 # Approximate provider prices for cost logging (USD). Override via env if needed.
 COSTS = {
-    # Claude Opus 5: $5/M input, $25/M output — logged from real usage in script_step
+    # Запасной тариф Anthropic — только для модели, которой нет в
+    # ANTHROPIC_PRICES выше. Известные модели считаются по таблице.
     "anthropic_input_per_mtok": float(os.environ.get("COST_ANTHROPIC_INPUT_MTOK", "5.0")),
     "anthropic_output_per_mtok": float(os.environ.get("COST_ANTHROPIC_OUTPUT_MTOK", "25.0")),
     # ElevenLabs multilingual v2 ~ $0.18 per 1000 chars (creator tier, approx)

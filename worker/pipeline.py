@@ -718,8 +718,11 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 log.info("[%s] реклама: «%s», снимков %d", project_id[:8],
                          brief.product_name, len(references))
             try:
+                # Снимки товара передаются только рекламе и только когда они
+                # есть: обычный вызов остаётся прежним.
+                extra = {"reference_urls": reference_urls} if brief is not None and reference_urls else {}
                 script = script_step.generate_script(
-                    cfg, project["topic"], project["style"], project["duration_sec"], brief=brief
+                    cfg, project["topic"], project["style"], project["duration_sec"], brief=brief, **extra
                 )
             except script_step.ScriptFailed as e:
                 # Провайдер мог ответить, взять деньги и выдать негодный

@@ -17,7 +17,7 @@ import re
 import httpx
 
 import product_brief
-from config import COSTS, Config
+from config import COSTS, Config, anthropic_price
 
 log = logging.getLogger("worker.script")
 
@@ -228,12 +228,16 @@ def _mock_ad_script(brief, style: str, duration_sec: int) -> dict:
     }
 
 
-def generate_script(cfg: Config, topic: str, style: str, duration_sec: int, brief=None) -> dict:
+def generate_script(cfg: Config, topic: str, style: str, duration_sec: int, brief=None,
+                    reference_urls: list[str] | None = None) -> dict:
     """Returns {"title": str, "scenes": [{"narration", "image_prompt"}, ...], "cost_usd": float}.
 
     `brief` — ProductBrief. Если он есть, пишется реклама: другая структура,
     другая схема ответа и прямой запрет выдумывать свойства товара. Обычный
     ролик этим не затронут — у него прежний промпт и прежняя схема.
+
+    `reference_urls` — снимки товара. Режиссёр с поддержкой изображений
+    (Anthropic) видит их и описывает товар по фото, а не по догадке.
     """
     if cfg.effective_script_mode == "mock":
         log.info("script: SCRIPT_MODE=mock — skipping Claude, using template scenes")
@@ -245,7 +249,8 @@ def generate_script(cfg: Config, topic: str, style: str, duration_sec: int, brie
         prompt = product_brief.ad_prompt(brief, style, duration_sec, words_per_scene)
         schema = AD_SCENES_SCHEMA
         log.info("script: реклама «%s», такты %s", brief.product_name, brief.structure(duration_sec))
-        return _run(cfg, prompt, schema, n, words_per_scene, brief.product_name)
+        images = [u for u in (reference_urls or []) if u][:MAX_DIRECTOR_IMAGES]
+        return _run(cfg, prompt, schema, n, words_per_scene, brief.product_name, images=images)
 
     n = _scene_count(duration_sec)
     words_per_scene = _words_per_scene(duration_sec, n)
@@ -276,7 +281,15 @@ Requirements:
     return _run(cfg, prompt, SCENES_SCHEMA, n, words_per_scene, topic)
 
 
-def _run(cfg: Config, prompt: str, schema: dict, n: int, words_per_scene: int, title: str) -> dict:
+PHOTO_NOTE = """
+
+The attached photos show the real product. In `continuity`, describe exactly what you
+see on them: shape, colours, materials, packaging and any visible text. Do not invent
+details that are not on the photos."""
+
+
+def _run(cfg: Config, prompt: str, schema: dict, n: int, words_per_scene: int, title: str,
+         images: list[str] | None = None) -> dict:
     """Общий хвост обоих режиссёров: цепочка провайдеров, проверка, длина.
 
     Провайдеры пробуются по очереди, как у кадров. Один провайдер — одна
@@ -301,7 +314,12 @@ def _run(cfg: Config, prompt: str, schema: dict, n: int, words_per_scene: int, t
             continue
         model = cfg.script_model(provider)
         try:
-            data, cost = callers[provider](cfg, prompt, schema)
+            if images and provider == "anthropic":
+                # Снимки уходят только тому, кто умеет их читать. Остальным —
+                # прежний текстовый запрос, без упоминания вложений.
+                data, cost = _via_anthropic(cfg, prompt + PHOTO_NOTE, schema, images=images)
+            else:
+                data, cost = callers[provider](cfg, prompt, schema)
         except ScriptRefusedError:
             raise
         except Exception as e:  # noqa: BLE001 — падение одного провайдера не финал
@@ -487,8 +505,43 @@ def _via_openrouter(cfg: Config, prompt: str, schema: dict = None) -> tuple[dict
     return data, float(cost)
 
 
-def _via_anthropic(cfg: Config, prompt: str, schema: dict = None) -> tuple[dict, float]:
-    """Сценарий через Anthropic напрямую."""
+# Потолок ответа режиссёра. У Fable 5.2, Opus 5 и новее размышление включено
+# всегда, и его токены входят в этот же потолок. Прежние 4000 были рассчитаны
+# на модель без размышления: с ним ответ мог оборваться раньше первой строки
+# сценария, вызов при этом оплачен. 16000 — рекомендуемый запас для запроса
+# без потоковой передачи; платим мы только за то, что модель реально написала.
+ANTHROPIC_MAX_TOKENS = 16000
+# Размышление занимает десятки секунд; двух минут, как у OpenRouter, мало.
+# 600 — штатный таймаут самого SDK для запроса без потоковой передачи. Короче
+# нельзя: по таймауту SDK повторяет запрос, а оборванный ответ может быть
+# оплачен. Задача считается зависшей только через 30 минут.
+ANTHROPIC_TIMEOUT_SEC = 600
+# Сколько снимков товара показывать режиссёру. Каждый стоит ~3 тыс. входных
+# токенов; первых двух хватает, чтобы описать товар таким, какой он есть.
+MAX_DIRECTOR_IMAGES = 2
+
+# Модели, у которых отказ фильтра безопасности можно автоматически передать
+# запасной модели на стороне Anthropic (параметр `fallbacks`). Без этого
+# ложное срабатывание фильтра на безобидную тему роняло бы проект целиком.
+_REFUSAL_FALLBACK_MODELS = {
+    "claude-fable-5-2", "claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5",
+}
+_FALLBACK_BETA = "server-side-fallback-2026-07-01"
+# Семейства, принимающие output_config.effort. Старым моделям параметр
+# не отправляется: они отвечают на него ошибкой.
+_EFFORT_PREFIXES = (
+    "claude-fable-", "claude-mythos-", "claude-opus-5", "claude-opus-4-6", "claude-opus-4-7",
+    "claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-5",
+)
+
+
+def _via_anthropic(cfg: Config, prompt: str, schema: dict = None,
+                   images: list[str] | None = None) -> tuple[dict, float]:
+    """Сценарий через Anthropic напрямую.
+
+    `images` — публичные ссылки на снимки товара. Режиссёр видит товар и
+    описывает его в `continuity` таким, какой он на фото, а не выдумывает.
+    """
     # Импорт здесь, а не наверху: в безопасном режиме этот код не выполняется,
     # и воркер должен запускаться без пакета anthropic — как и без fal_client.
     import anthropic
@@ -501,24 +554,55 @@ def _via_anthropic(cfg: Config, prompt: str, schema: dict = None) -> tuple[dict,
         if cfg.anthropic_workspace_id else None
     )
     client = anthropic.Anthropic(
-        api_key=cfg.anthropic_api_key, timeout=REQUEST_TIMEOUT, default_headers=headers
+        api_key=cfg.anthropic_api_key, timeout=ANTHROPIC_TIMEOUT_SEC, default_headers=headers
     )
-    response = client.messages.create(
-        model=cfg.llm_model,
-        max_tokens=4000,
-        output_config={"format": {"type": "json_schema", "schema": schema or SCENES_SCHEMA}},
-        messages=[{"role": "user", "content": prompt}],
-    )
+    model = cfg.llm_model.strip()
+    output_config: dict = {"format": {"type": "json_schema", "schema": schema or SCENES_SCHEMA}}
+    if model.startswith(_EFFORT_PREFIXES):
+        output_config["effort"] = cfg.llm_effort
 
+    content: list[dict] | str = prompt
+    if images:
+        content = [
+            {"type": "image", "source": {"type": "url", "url": url}}
+            for url in images[:MAX_DIRECTOR_IMAGES]
+        ] + [{"type": "text", "text": prompt}]
+
+    request = dict(
+        model=model,
+        max_tokens=ANTHROPIC_MAX_TOKENS,
+        output_config=output_config,
+        messages=[{"role": "user", "content": content}],
+    )
+    # Параметры размышления и sampling не отправляются вовсе: у Fable 5.2
+    # размышление включено всегда, а temperature и принудительный tool_choice
+    # отклоняются ошибкой 400.
+    if model in _REFUSAL_FALLBACK_MODELS:
+        response = client.beta.messages.create(betas=[_FALLBACK_BETA], fallbacks="default", **request)
+    else:
+        response = client.messages.create(**request)
+
+    # Причина остановки проверяется ДО чтения ответа: при отказе текста нет.
+    # Отказ здесь означает, что отказали и основная, и запасная модель.
     if response.stop_reason == "refusal":
         raise ScriptRefusedError("Тема отклонена модерацией контента. Переформулируйте запрос.")
     if response.stop_reason == "max_tokens":
         raise RuntimeError("Сценарий не поместился в лимит токенов — повторите")
 
-    text = next(b.text for b in response.content if b.type == "text")
+    text = next((b.text for b in response.content if getattr(b, "type", "") == "text"), "")
+    if not text.strip():
+        raise RuntimeError("Anthropic вернул ответ без текста сценария")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Anthropic вернул не JSON: {text[:200]}") from e
+
+    # Цена — по модели, которая реально ответила: при отказе основной это
+    # запасная, и её тариф другой.
+    served_by = getattr(response, "model", None) or model
+    price_in, price_out = anthropic_price(served_by if isinstance(served_by, str) else model)
     usage = response.usage
-    cost = (
-        usage.input_tokens / 1_000_000 * COSTS["anthropic_input_per_mtok"]
-        + usage.output_tokens / 1_000_000 * COSTS["anthropic_output_per_mtok"]
-    )
-    return json.loads(text), cost
+    cost = usage.input_tokens / 1_000_000 * price_in + usage.output_tokens / 1_000_000 * price_out
+    if served_by != model:
+        log.info("script: %s отказала, сценарий написала запасная %s", model, served_by)
+    return data, cost
