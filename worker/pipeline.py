@@ -176,15 +176,45 @@ def _clip_tracking(db: Db, guard, project_id: str, shot: dict, index: int):
                                clip_sec=clip_sec)
 
 
-def _forget_request(db: Db, shot: dict, error: Exception | None = None) -> None:
-    """Номер задачи остаётся у кадра, только пока у провайдера есть что забрать."""
-    if not shot.get("provider_request_id") or getattr(error, "retrievable", False):
-        return
+def _forget_request(db: Db, shot: dict, error: Exception | None = None) -> bool:
+    """Номер задачи остаётся у кадра, только пока у провайдера есть что забрать.
+
+    True — номера у кадра больше нет и повтор проекта эту задачу не тронет.
+    """
+    if getattr(error, "retrievable", False):
+        return False
+    if not shot.get("provider_request_id"):
+        return True
     try:
         db.remember_provider_request(shot["id"], provider_request_id=None)
     except Exception as e:  # noqa: BLE001
         log.warning("кадр %s: номер задачи не снят: %s", str(shot.get("id"))[:8], e)
+        return False
     shot["provider_request_id"] = None
+    return True
+
+
+def _refund_unbilled(db: Db, guard, project_id: str, shot: dict, index: int, error: Exception) -> None:
+    """Вернуть в журнал деньги принятой задачи, которую провайдер не списал.
+
+    Трата пишется в миг принятия задачи. Higgsfield не берёт денег за задачи,
+    закончившиеся `failed` и `nsfw`, и возвращает их за снятую из очереди.
+    Без возврата журнал завышал себестоимость, а бюджет проекта кончался
+    раньше времени. Вызывается, только когда номер задачи уже снят с кадра:
+    иначе повтор проекта увидел бы ту же задачу и вернул деньги второй раз.
+    """
+    request = getattr(error, "request", None)
+    if (request is None or not getattr(error, "recorded", False)
+            or getattr(error, "status", "") not in video_step.REFUNDED_STATUSES or request.cost_usd <= 0):
+        return
+    db.log_cost(project_id, "video", request.provider, -request.cost_usd,
+                f"shot {index} · {request.request_id} · возврат: {error.status}")
+    guard.refund(request.cost_usd, f"видео кадра {index}, {error.status}")
+    try:
+        db.update_shot(shot["id"], actual_cost_usd=0)
+    except Exception as e:  # noqa: BLE001 — журнал уже верен, поле кадра вторично
+        log.warning("[%s] кадр %d: цена кадра не обнулена: %s", project_id[:8], index, e)
+    shot["actual_cost_usd"] = 0
 
 
 def _real_clip(cfg: Config, db: Db, guard, project_id: str, shot: dict, index: int,
@@ -204,7 +234,8 @@ def _real_clip(cfg: Config, db: Db, guard, project_id: str, shot: dict, index: i
             log.warning("[%s] кадр %d: прошлая задача %s клип не отдала: %s",
                         project_id[:8], index, pending.request_id, e)
             db.update_shot(shot["id"], failure_reason=str(e)[:500])
-            _forget_request(db, shot, e)
+            if _forget_request(db, shot, e):
+                _refund_unbilled(db, guard, project_id, shot, index, e)
             if getattr(e, "retrievable", False) or isinstance(
                 e, (video_step.ContentRejected, safe_mode.PaidCallBlocked)
             ):
@@ -228,9 +259,12 @@ def _real_clip(cfg: Config, db: Db, guard, project_id: str, shot: dict, index: i
         # движением по картинке, остальные идут дальше, причина записывается.
         log.warning("[%s] кадр %d без настоящего видео: %s", project_id[:8], index, e)
         db.update_shot(shot["id"], failure_reason=str(e)[:500])
-        _forget_request(db, shot, e)
-        if isinstance(e, video_step.AcceptedButNotDelivered) and not e.recorded:
+        if _forget_request(db, shot, e):
+            _refund_unbilled(db, guard, project_id, shot, index, e)
+        if (isinstance(e, video_step.AcceptedButNotDelivered) and not e.recorded
+                and e.status not in video_step.REFUNDED_STATUSES):
             # Задачу приняли, а журнал о ней не узнал: деньги всё равно ушли.
+            # Упавшую или снятую задачу провайдер не списывает — писать нечего.
             db.log_cost(project_id, "video", e.request.provider, e.request.cost_usd,
                         f"shot {index} · {e.request.request_id} · не получен")
             guard.record(e.request.cost_usd, f"видео кадра {index} (не получено)")

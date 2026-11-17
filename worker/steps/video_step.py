@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import threading
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -316,6 +317,25 @@ class ContentRejected(VideoError):
     отклонённое одной моделью отклонит и соседняя, а вызов будет стоить
     денег. У Higgsfield это отдельный терминальный статус `nsfw`, а не
     ошибка сети — мы это различие сохраняем.
+
+    `request` и `recorded` есть, когда отказала уже принятая задача: по ним
+    конвейер возвращает в журнал деньги, которые провайдер не списал.
+    """
+
+    def __init__(self, message: str, *, request: "ProviderRequest | None" = None,
+                 status: str = "", recorded: bool = False) -> None:
+        super().__init__(message)
+        self.request = request
+        self.status = status
+        self.recorded = recorded
+
+
+class InsufficientBalance(VideoError):
+    """Higgsfield ответил 403: на балансе нет денег.
+
+    Соседняя модель Higgsfield берёт деньги с того же баланса, поэтому
+    очередь моделей внутри Higgsfield на этом останавливается. Другой
+    провайдер цепочки (fal) — другой счёт, к нему идти можно.
     """
 
 
@@ -323,6 +343,12 @@ class ContentRejected(VideoError):
 # `ip_detected` встречается в их же руководстве по разбору сбоев — принимаем
 # оба, чтобы новый повод для отказа не притворился сбоем сети.
 CONTENT_STATUSES = {"nsfw", "ip_detected"}
+
+# Принятые задачи, за которые Higgsfield денег не берёт: `failed` и `nsfw` не
+# списываются, снятая из очереди возвращается (docs.higgsfield.ai, «Billing
+# and retention»). `ip_detected` там не назван — считаем его оплаченным:
+# завысить трату безопаснее, чем занизить.
+REFUNDED_STATUSES = {"failed", "nsfw", "canceled"}
 
 
 def _json_or_fail(response, what: str) -> dict:
@@ -532,7 +558,7 @@ def _higgsfield_in_order(
     for position, name in enumerate(order, start=1):
         try:
             return _via_higgsfield(cfg, image_public_url, motion_prompt, out_path, name)
-        except (ContentRejected, AcceptedButNotDelivered):
+        except (ContentRejected, AcceptedButNotDelivered, InsufficientBalance):
             raise
         except VideoError as e:
             errors.append(f"{name}: {e}")
@@ -563,11 +589,16 @@ def _via_higgsfield(
     seconds = _clip_seconds(model, getattr(_tracking, "clip_sec", None))
     payload = _higgsfield_payload(model, motion_prompt, image_public_url, seconds)
 
+    # Один ключ на одно намерение «сделать этот клип». Повтор постановки с ним
+    # после обрыва или 5xx вернёт исходную задачу, а не создаст и не оплатит
+    # вторую (docs.higgsfield.ai, «Idempotent requests»).
+    headers = {**_higgsfield_headers(cfg), "Idempotency-Key": str(uuid.uuid4())}
+
     # До ответа на постановку денег не взяли: сбой здесь — обычный отказ,
     # и цепочка вправе попробовать соседа.
     try:
         with httpx.Client(timeout=120) as client:
-            started = _higgsfield_submit(client, f"{HIGGSFIELD_BASE}/{model}", _higgsfield_headers(cfg), payload)
+            started = _higgsfield_submit(client, f"{HIGGSFIELD_BASE}/{model}", headers, payload)
     except httpx.HTTPError as e:
         raise VideoError(f"Higgsfield: сеть — {e}") from e
     if not started.get("request_id"):
@@ -676,7 +707,8 @@ def _collect_higgsfield(
             _notify_status(request, state)
             told = state
         if state in CONTENT_STATUSES:
-            raise ContentRejected(f"Higgsfield отклонил кадр по содержанию ({state})")
+            raise ContentRejected(f"Higgsfield отклонил кадр по содержанию ({state})",
+                                  request=request, status=state, recorded=recorded)
         if state != "completed":
             raise undelivered(f"Higgsfield: {state} — {str(data.get('error'))[:300]}", state, False)
 
@@ -710,24 +742,59 @@ def _collect_higgsfield(
     )
 
 
-def _higgsfield_submit(client, url: str, headers: dict, payload: dict) -> dict:
-    """Постановка задачи с повторами на перегрузке.
+# Самая долгая пауза перед повтором постановки, даже если Retry-After просит больше.
+HIGGSFIELD_MAX_WAIT_SEC = 60.0
 
-    Раньше единственный отказ 429 ронял кадр целиком. Пауза растёт, чтобы
-    повтор не добавлял нагрузки тому, кто уже ей захлёбывается.
+
+def _retry_wait(response, attempt: int) -> float:
+    """Пауза перед повтором: их `Retry-After` (429 при полной очереди), иначе растущая."""
+    try:
+        wait = float(response.headers.get("Retry-After"))
+    except (AttributeError, TypeError, ValueError):
+        wait = 2.0 ** attempt
+    return min(max(wait, 1.0), HIGGSFIELD_MAX_WAIT_SEC)
+
+
+def _higgsfield_submit(client, url: str, headers: dict, payload: dict) -> dict:
+    """Постановка задачи с повторами на перегрузке и обрыве связи.
+
+    Все попытки идут с одним ключом идемпотентности из `headers`: если первая
+    дошла, а ответ потерялся, Higgsfield вернёт ту же задачу и второй раз
+    денег не возьмёт. Раньше обрыв связи сразу отдавал кадр соседней модели,
+    хотя первая задача могла быть принята и оплачена.
     """
     import time
 
     last = ""
     for attempt in range(1, HIGGSFIELD_ATTEMPTS + 1):
-        response = client.post(url, headers=headers, json=payload)
-        if response.status_code < 400:
-            return _json_or_fail(response, "постановке задачи")
-        last = f"HTTP {response.status_code}: {response.text[:300]}"
-        if response.status_code not in HIGGSFIELD_RETRY_CODES or attempt == HIGGSFIELD_ATTEMPTS:
-            raise VideoError(f"Higgsfield отказал — {last}")
-        time.sleep(2 ** attempt)
+        wait = 2.0 ** attempt
+        try:
+            response = client.post(url, headers=headers, json=payload)
+        except httpx.TransportError as e:
+            last = f"сеть — {e}"
+        else:
+            code = response.status_code
+            if code < 400:
+                return _json_or_fail(response, "постановке задачи")
+            last = f"HTTP {code}: {response.text[:300]}"
+            if code == 403 and _is_json(response):
+                # По их таблице ошибок 403 — только «недостаточно средств».
+                # HTML-страница проверки с тем же кодом сюда не попадает.
+                raise InsufficientBalance(f"на балансе Higgsfield нет денег — {last}")
+            if code not in HIGGSFIELD_RETRY_CODES:
+                raise VideoError(f"Higgsfield отказал — {last}")
+            wait = _retry_wait(response, attempt)
+        if attempt < HIGGSFIELD_ATTEMPTS:
+            time.sleep(wait)
     raise VideoError(f"Higgsfield отказал — {last}")
+
+
+def _is_json(response) -> bool:
+    try:
+        response.json()
+    except ValueError:
+        return False
+    return True
 
 
 def _higgsfield_cancel(client, headers: dict, request: ProviderRequest) -> bool:

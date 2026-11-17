@@ -106,6 +106,16 @@ class BudgetGuard:
                 self.remaining_usd, self.repair_reserve_usd,
             )
 
+    def refund(self, amount_usd: float, what: str = "") -> None:
+        """Вернуть трату, которую провайдер не списал: задача упала или снята.
+
+        Без этого упавший клип съедал бюджет проекта, и следующим кадрам
+        доставались модели дешевле положенного.
+        """
+        self.spent_usd = round(max(self.spent_usd - max(amount_usd, 0.0), 0.0), 6)
+        log.info("[BUDGET] возврат $%.4f%s, потрачено $%.4f",
+                 max(amount_usd, 0.0), f" ({what})" if what else "", self.spent_usd)
+
     def summary(self) -> dict[str, float | int | None]:
         return {
             "max_budget_usd": self.max_budget_usd,

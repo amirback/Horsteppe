@@ -77,6 +77,8 @@
 | **Аудит и доработка от 16.11.2026** | | | | | ветка `wave1/fable-director` |
 | Режиссёр на Fable 5.2 (`claude-fable-5-2` — языковая модель Anthropic, не видеомодель): потолок ответа 16 000 вместо 4 000 (размышление входит в него), запасная модель при отказе фильтра, цена по модели, которая ответила, фото товара видит режиссёр рекламы | mac | `VERIFIED` | 2026-11-16 | `pytest tests/ -q` | **483 passed, 12 subtests passed за 238 с**; 15 новых тестов в `test_director_fable.py`, клиент Anthropic подменён |
 | Настоящий вызов Fable 5.2 | Anthropic API | `IMPLEMENTED_UNTESTED` | 2026-11-16 | — | Платный вызов не делался. Fable 5.2 требует хранения данных 30 дней в организации Anthropic; иначе ошибка 400 — тогда `LLM_MODEL=claude-opus-5-5` |
+| Деньги Higgsfield: ключ идемпотентности на каждую постановку, повтор после обрыва и 5xx — с тем же ключом; 403 «нет денег» останавливает очередь моделей Higgsfield; 429 ждёт `Retry-After`; задачи `failed`, `nsfw` и снятые из очереди возвращаются в журнал и бюджет ровно один раз | mac | `VERIFIED` | 2026-11-17 | `pytest tests/ -q` | **498 passed, 12 subtests passed за 222 с**; 15 новых тестов в `test_higgsfield_money.py`. Ветка `wave1/higgsfield-money` |
+| То же на настоящем Higgsfield | Higgsfield API | `IMPLEMENTED_UNTESTED` | 2026-11-17 | — | Поведение взято из docs.higgsfield.ai («Idempotent requests», «Billing and retention», «Errors»); живой вызов не делался |
 | **Сайт продукта** | | | | | |
 | Сборка сайта | mac | `VERIFIED` | 2026-09-05 | `npm run build` | ✓ 4 страницы, статика, 116 kB |
 | Публикация | vercel | `VERIFIED` | 2026-09-05 | `curl -o /dev/null -w "%{http_code}"` | `200` |
