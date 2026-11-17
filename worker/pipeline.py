@@ -119,6 +119,19 @@ def real_video_coverage(shots: list[dict]) -> float:
 
 # ------------------------------------------------ настоящий клип для кадра --
 
+# Потолок важности кадра по уровню пакета (projects.quality_tier, миграция
+# 0007). Уровни моделей — providers.VIDEO_TIERS: от 0.90 — Kling 4.0 /
+# Seedance 2.5, от 0.50 — Kling 3.0 Pro / Seedance 2.0, ниже — Wan 3.0 /
+# Kling 3.0 Std. Эконом получает только лёгкий уровень, медиум — не выше
+# среднего, премиум — без потолка. Проект без уровня (до кредитов) — как раньше.
+TIER_IMPORTANCE_CEILING = {"economy": 0.0, "medium": 0.5, "premium": 1.0}
+
+
+def capped_importance(importance: float, quality_tier: str | None) -> float:
+    ceiling = TIER_IMPORTANCE_CEILING.get((quality_tier or "").strip())
+    return importance if ceiling is None else min(importance, ceiling)
+
+
 def _pending_request(shot: dict):
     """Задача провайдера из прошлого запуска, результат которой не забран."""
     if not shot.get("provider_request_id") or shot.get("video_url"):
@@ -361,7 +374,8 @@ def _animate_photo(cfg: Config, db: Db, project: dict, reference: dict, work_dir
             def choose(i=i):
                 affordable = guard.spendable_usd if guard.has_ceiling else None
                 filters = dict(needs_image_to_video=True, needs_reference=True, aspect=aspect)
-                choice = providers.choose("video", importance=1.0, shot_label=f"клип {i + 1}",
+                choice = providers.choose("video", importance=capped_importance(1.0, project.get("quality_tier")),
+                                          shot_label=f"клип {i + 1}",
                                           affordable_usd=affordable, **filters)
                 return choice, None if choice else providers.why_not("video", affordable_usd=affordable, **filters)
 
@@ -918,8 +932,10 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                     affordable = guard.spendable_usd if guard.has_ceiling else None
                     filters = dict(needs_image_to_video=True, aspect=aspect_hint,
                                    needs_reference=bool(shot.get("first_frame_reference")))
+                    importance = capped_importance(float(shot.get("visual_importance") or 0.5),
+                                                   project.get("quality_tier"))
                     choice = providers.choose(
-                        "video", importance=float(shot.get("visual_importance") or 0.5),
+                        "video", importance=importance,
                         shot_label=f"кадр {i + 1}", affordable_usd=affordable, **filters,
                     )
                     return choice, None if choice else providers.why_not("video", affordable_usd=affordable, **filters)

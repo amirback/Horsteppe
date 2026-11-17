@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminReady } from "@/lib/supabase/env";
 import { isUuid } from "@/lib/ids";
+import { isTier, releaseCredit, reserveCredit } from "@/lib/credits";
 
 /**
  * Сколько запусков сборщика допускается на один проект за всю его жизнь.
@@ -43,10 +44,11 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   }
 
   // Читаем через пользовательский клиент: политики доступа сами не отдадут
-  // чужой проект, и проверять принадлежность вручную не нужно.
+  // чужой проект, и проверять принадлежность вручную не нужно. Все столбцы —
+  // потому что quality_tier есть только после миграции 0007.
   const { data: project } = await supabase
     .from("projects")
-    .select("id, status")
+    .select("*")
     .eq("id", id)
     .maybeSingle();
   if (!project) {
@@ -84,6 +86,19 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     return NextResponse.json({ error: "retry_limit" }, { status: 429 });
   }
 
+  // Упавший проект свой кредит вернул — повтор берёт его заново. Проекты,
+  // созданные до кредитов, уровня не имеют и повторяются как раньше.
+  let held = false;
+  if (isTier(project.quality_tier)) {
+    const credit = await reserveCredit(admin, id, project.quality_tier);
+    if (!credit.ok && credit.reason !== "legacy") {
+      return credit.reason === "no_credits"
+        ? NextResponse.json({ error: "no_credits" }, { status: 402 })
+        : NextResponse.json({ error: "credits_error" }, { status: 500 });
+    }
+    held = credit.ok;
+  }
+
   // Сначала проект, потом задача. В обратном порядке сборщик мог успеть
   // взять задачу и написать «Пишем сценарий…», а мы затёрли бы это своим
   // «В очереди…». Сборщик берёт только задачи, так что проект в очереди без
@@ -95,6 +110,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     .eq("status", "failed"); // второй клик не перезапишет уже идущую сборку
   if (projectError) {
     console.error("project requeue failed:", projectError.message);
+    // Статус остался «ошибка», триггер не сработает — кредит возвращаем сами.
+    if (held) await releaseCredit(admin, id);
     return NextResponse.json({ error: "queue_failed" }, { status: 500 });
   }
 

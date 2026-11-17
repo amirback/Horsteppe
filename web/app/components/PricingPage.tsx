@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { content } from "../lib/content";
+import { account } from "../lib/account-content";
 import type { Lang } from "../lib/i18n";
 import { Nav } from "./Nav";
 import { Ambience } from "./Ambience";
@@ -69,6 +70,12 @@ export function PricingPage({ lang, email }: { lang: Lang; email?: string | null
         </Stagger>
 
         <Reveal>
+          <Link
+            href={`/${lang}/account#packages`}
+            className="nav-link mt-8 inline-flex items-center justify-center rounded-full bg-ink px-6 py-3 text-cream transition hover:bg-forest"
+          >
+            {account[lang].buyPackage}
+          </Link>
           <p className="mt-8 max-w-2xl text-[12.5px] leading-relaxed text-ink-soft/60">{p.note}</p>
         </Reveal>
       </main>

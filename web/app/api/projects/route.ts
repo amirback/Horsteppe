@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { isAdminReady, isBackendReady } from "@/lib/supabase/env";
+import { creditsEnabled, isTier, reserveCredit } from "@/lib/credits";
 
 const STYLES = ["cinematic", "documentary", "explainer", "product", "anime"];
 const LIST_LIMIT = 50;
@@ -135,6 +136,7 @@ export async function POST(request: Request) {
     brief?: Record<string, unknown>;
     max_budget_usd?: number;
     references?: unknown;
+    tier?: string;
   };
   try {
     body = await request.json();
@@ -231,6 +233,14 @@ export async function POST(request: Request) {
     );
   }
 
+  // Кредиты (миграция 0007): ролик делается только под оплаченный кредит
+  // выбранного уровня. До миграции — прежний режим без кредитов.
+  const credits = await creditsEnabled(admin);
+  const tier = isTier(body.tier) ? body.tier : null;
+  if (credits && !tier) {
+    return NextResponse.json({ error: "tier_required" }, { status: 400 });
+  }
+
   const { data: project, error: projectError } = await admin
     .from("projects")
     .insert({
@@ -244,12 +254,26 @@ export async function POST(request: Request) {
       max_budget_usd: maxBudget,
       status: "queued",
       status_detail: "В очереди…",
+      ...(credits ? { quality_tier: tier } : {}),
     })
     .select()
     .single();
   if (projectError || !project) {
     console.error("project insert failed:", projectError?.message);
     return NextResponse.json({ error: "create_failed" }, { status: 500 });
+  }
+
+  if (credits && tier) {
+    // Атомарно в базе: два одновременных заказа не потратят один кредит.
+    const held = await reserveCredit(admin, project.id, tier);
+    if (!held.ok) {
+      // Проекта без кредита не бывает. Задачи у него ещё нет, строку убираем.
+      const { error: dropError } = await admin.from("projects").delete().eq("id", project.id);
+      if (dropError) await failProject(admin, project.id, "Нет кредита на ролик");
+      return held.reason === "no_credits"
+        ? NextResponse.json({ error: "no_credits" }, { status: 402 })
+        : NextResponse.json({ error: "credits_error" }, { status: 500 });
+    }
   }
 
   // Снимки переезжают из отстойника в каталог проекта только теперь, когда

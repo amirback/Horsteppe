@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Lang } from "../lib/i18n";
 import { studio } from "../lib/studio-content";
 import { productStudio } from "../lib/product-content";
+import { account, type Tier } from "../lib/account-content";
 import { ArrowIcon } from "./ui";
 import { Magnetic, motion } from "./motion";
 import { shrinkPhoto } from "../lib/shrink-photo";
@@ -22,6 +24,22 @@ const DRAFT_KEY = "horsteppe-draft";
 
 type Mode = "general_video" | "product_ad" | "image_to_video";
 type Picked = { file: File; preview: string };
+/** Кредиты одного уровня: сколько осталось и на какую самую длинную длину. */
+type Credit = { tier: Tier; left: number; maxSec: number };
+const TIERS_BEST_FIRST: Tier[] = ["premium", "medium", "economy"];
+
+/** Свести балансы кабинета к выбору «уровень · осталось». */
+function creditsFrom(balances: { tier: Tier; video_sec: number; available: number }[]): Credit[] {
+  return TIERS_BEST_FIRST.flatMap((tier) => {
+    const rows = balances.filter((b) => b.tier === tier && b.available > 0);
+    if (rows.length === 0) return [];
+    return [{
+      tier,
+      left: rows.reduce((sum, b) => sum + b.available, 0),
+      maxSec: Math.max(...rows.map((b) => b.video_sec)),
+    }];
+  });
+}
 
 /**
  * Потолок расходов из поля ввода.
@@ -80,8 +98,41 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const a = account[lang];
+  // null — кредиты не включены (или человек не вошёл): форма как раньше.
+  const [credits, setCredits] = useState<Credit[] | null>(null);
+  const [tier, setTier] = useState<Tier | "">("");
 
-  const message = (code: string) => p.errors[code] ?? s.errors[code] ?? s.errors.unknown;
+  const message = (code: string) => p.errors[code] ?? a.errors[code] ?? s.errors[code] ?? s.errors.unknown;
+
+  // Кредиты из кабинета: какой уровень списать и до какой длины ролик.
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/account", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (!alive || !body?.enabled) return;
+        const list = creditsFrom(body.balances ?? []);
+        setCredits(list);
+        setTier((current) => current || list[0]?.tier || "");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const chosen = credits?.find((c) => c.tier === tier) ?? null;
+  // Длина ролика не длиннее кредита: на 15-секундный кредит 30 секунд не собрать.
+  const maxSec = chosen?.maxSec ?? null;
+  const durationOptions = maxSec === null
+    ? s.duration.options
+    : s.duration.options.filter((o) => Number(o.value) <= maxSec);
+  useEffect(() => {
+    if (maxSec === null || Number(duration) <= maxSec) return;
+    const fit = s.duration.options.filter((o) => Number(o.value) <= maxSec);
+    if (fit.length > 0) setDuration(fit[fit.length - 1].value);
+  }, [maxSec, duration, s.duration.options]);
 
   // Превью живут в памяти браузера и освобождаются при уходе со страницы.
   //
@@ -172,6 +223,10 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
     if (busy) return;
     // Проверки на клиенте — вежливость, а не защита: сервер проверяет всё
     // заново. Смысл в том, чтобы человек узнал о пропущенном поле сразу.
+    if (credits && !chosen) {
+      setError(message("no_credits"));
+      return;
+    }
     if (mode === "product_ad" && !name.trim()) {
       setError(message("product_name_required"));
       return;
@@ -253,6 +308,7 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
           project_type: mode,
           references,
           max_budget_usd: maxBudget,
+          ...(credits ? { tier } : {}),
           brief:
             mode === "product_ad"
               ? {
@@ -481,8 +537,17 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+        {credits && credits.length > 0 ? (
+          <Select
+            label={a.credit}
+            options={credits.map((c) => ({ value: c.tier, label: a.creditOption(a.tiers[c.tier], c.left) }))}
+            value={tier}
+            onChange={(v) => setTier(v as Tier)}
+            disabled={busy}
+          />
+        ) : null}
         <Select label={s.style.label} options={s.style.options} value={style} onChange={setStyle} disabled={busy} />
-        <Select label={s.duration.label} options={s.duration.options} value={duration} onChange={setDuration} disabled={busy} />
+        <Select label={s.duration.label} options={durationOptions} value={duration} onChange={setDuration} disabled={busy} />
         <Select label={s.format.label} options={s.format.options} value={format} onChange={setFormat} disabled={busy} />
       </div>
 
@@ -494,7 +559,18 @@ export function Generator({ lang, variant = "hero" }: { lang: Lang; variant?: "h
           className="mx-auto mt-4 max-w-[560px] rounded-2xl border border-ember/40 bg-paper/80 px-4 py-2.5 text-center text-[13px] leading-relaxed text-ember backdrop-blur-sm"
         >
           {error}
+          {credits && (error === a.errors.no_credits || credits.length === 0) ? (
+            <>
+              {" "}
+              <Link href={`/${lang}/account`} className="underline underline-offset-2">{a.buyPackage}</Link>
+            </>
+          ) : null}
         </motion.p>
+      ) : credits && credits.length === 0 ? (
+        <p className="mx-auto mt-4 max-w-[560px] rounded-2xl bg-paper/70 px-4 py-2.5 text-center text-[13px] leading-relaxed text-ink backdrop-blur-sm">
+          {a.noCredits}{" "}
+          <Link href={`/${lang}/account`} className="font-medium underline underline-offset-2">{a.buyPackage}</Link>
+        </p>
       ) : (
         <p className="mx-auto mt-4 max-w-[560px] rounded-2xl bg-paper/55 px-4 py-2.5 text-center text-[12.5px] leading-relaxed text-ink-soft/80 backdrop-blur-sm">
           {s.notice}
