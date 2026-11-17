@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import base64
@@ -49,17 +51,13 @@ POLLINATIONS_TIMEOUT_SEC = float(os.environ.get("POLLINATIONS_TIMEOUT_SEC", "90"
 # без ответа, 3 секунды и 780 секунд без ответа. На 576x1024 — 12 успехов из
 # 12 по 45 секунд. Просим то, что он и так отдаёт; картинка не меняется, а
 # зависания исчезают. Кадр меньше финального — Ken Burns всё равно увеличивает
-# исходник вдвое и кадрирует под нужный формат.
-POLLINATIONS_WIDTH = 576
-POLLINATIONS_HEIGHT = 1024
+# исходник вдвое и кадрирует под нужный формат. Размеры — POLLINATIONS_SIZES.
 POLLINATIONS_ATTEMPTS = 3
 
 TOGETHER_URL = "https://api.together.xyz/v1/images/generations"
 TOGETHER_TIMEOUT_SEC = float(os.environ.get("TOGETHER_TIMEOUT_SEC", "90"))
 TOGETHER_ATTEMPTS = 3
-# Стороны кратны 16 и не выше 1792 — таковы требования эндпоинта.
-TOGETHER_WIDTH = 1024
-TOGETHER_HEIGHT = 1792
+# Стороны кратны 16 и не выше 1792 — таковы требования эндпоинта (TOGETHER_SIZES).
 # FLUX.1-schnell рассчитан на 1–4 шага; больше ничего не улучшает.
 TOGETHER_STEPS = 4
 # Пауза между попытками. Бесплатный сервис отвечает 500 под нагрузкой, и
@@ -75,11 +73,43 @@ class ImageError(Exception):
     pass
 
 
+# Размер кадра по формату проекта. Раньше все генераторы рисовали вертикаль
+# при любом формате, и в ролике 16:9 монтаж отрезал больше половины кадра.
+# Pollinations: площадь как у проверенного 576×1024 (другие форматы живым
+# запросом не проверены). Together: стороны кратны 16 и не выше 1792.
+# fal и заглушка: размер финального кадра (media.FORMATS).
+POLLINATIONS_SIZES = {"9:16": (576, 1024), "16:9": (1024, 576), "1:1": (768, 768), "4:5": (704, 880)}
+TOGETHER_SIZES = {"9:16": (1024, 1792), "16:9": (1792, 1024), "1:1": (1024, 1024), "4:5": (1024, 1280)}
+
+# Формат задаётся конвейером на время вызова — как бюджет в video_step.tracking,
+# — поэтому подпись generate_image не меняется и подмены в тестах верны.
+_frame = threading.local()
+
+
+@contextmanager
+def frame(aspect: str | None):
+    """Формат кадра проекта ("9:16", "16:9", "1:1", "4:5") для генерации внутри блока."""
+    previous = getattr(_frame, "aspect", None)
+    _frame.aspect = aspect
+    try:
+        yield
+    finally:
+        _frame.aspect = previous
+
+
+def _aspect() -> str:
+    """Текущий формат; неизвестный — вертикаль, как в монтаже."""
+    aspect = (getattr(_frame, "aspect", None) or "9:16").strip()
+    return aspect if aspect in POLLINATIONS_SIZES else "9:16"
+
+
 def generate_image(cfg: Config, prompt: str, out_path: Path, index: int = 0) -> float:
-    """Generate a 1080x1920 image for `prompt`, save to out_path.
+    """Generate an image in the project's frame format (see `frame`), save to out_path.
     Returns estimated cost in USD."""
     if not safe_mode.is_paid_allowed(cfg):
-        return safe_mode.placeholder_image(prompt, out_path, (1080, 1920), index)
+        import media
+
+        return safe_mode.placeholder_image(prompt, out_path, media.frame_size(_aspect()), index)
 
     chain = cfg.image_providers
     errors: list[str] = []
@@ -116,9 +146,10 @@ def _via_pollinations(cfg: Config, prompt: str, out_path: Path, index: int) -> f
     # шестнадцати, и выглядело это как случайные сбои провайдера.
     seed = int(hashlib.sha256(f"{index}:{prompt}".encode()).hexdigest()[:8], 16) % MAX_SEED
     url = POLLINATIONS_URL + urllib.parse.quote(prompt, safe="")
+    width, height = POLLINATIONS_SIZES[_aspect()]
     params = {
-        "width": POLLINATIONS_WIDTH,
-        "height": POLLINATIONS_HEIGHT,
+        "width": width,
+        "height": height,
         "model": cfg.pollinations_model,
         "nologo": "true",
         "seed": seed,
@@ -203,11 +234,12 @@ def _via_together(cfg: Config, prompt: str, out_path: Path, index: int) -> float
         raise ImageError("TOGETHER_API_KEY не задан")
 
     seed = int(hashlib.sha256(f"{index}:{prompt}".encode()).hexdigest()[:8], 16) % MAX_SEED
+    width, height = TOGETHER_SIZES[_aspect()]
     payload = {
         "model": cfg.together_image_model,
         "prompt": prompt,
-        "width": TOGETHER_WIDTH,
-        "height": TOGETHER_HEIGHT,
+        "width": width,
+        "height": height,
         "steps": TOGETHER_STEPS,
         "n": 1,
         "seed": seed,
@@ -273,14 +305,16 @@ def _via_fal(cfg: Config, prompt: str, out_path: Path) -> float:
     """Платная генерация кадра через fal.ai."""
     os.environ.setdefault("FAL_KEY", cfg.fal_key)
     import fal_client
+    import media
 
+    width, height = media.frame_size(_aspect())
     try:
         result = call_with_timeout(
             fal_client.subscribe,
             cfg.fal_image_model,
             arguments={
                 "prompt": prompt,
-                "image_size": {"width": 1080, "height": 1920},
+                "image_size": {"width": width, "height": height},
                 "num_images": 1,
                 "enable_safety_checker": True,
             },

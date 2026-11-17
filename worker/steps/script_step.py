@@ -48,7 +48,7 @@ SCENES_SCHEMA = {
                     },
                     "image_prompt": {
                         "type": "string",
-                        "description": "English text-to-image prompt for this scene, vertical 9:16 composition",
+                        "description": "English text-to-image prompt for this scene, composed for the video's frame format",
                     },
                     # Кадры камеры внутри сцены. Раньше их придумывала механика,
                     # склеивая половину закадрового текста с общим промптом, —
@@ -162,7 +162,17 @@ def _scene_count(duration_sec: int) -> int:
     return max(3, min(5, round(duration_sec / 7)))
 
 
-def _mock_script(topic: str, style: str, duration_sec: int) -> dict:
+# Формат кадра словами для промпта. Ключи — как в media.FORMATS и в проверке
+# столбца projects.aspect_ratio (миграция 0002). Раньше промпт всегда просил
+# вертикаль 9:16, и ролик 16:9 собирался из вертикальных кадров.
+COMPOSITIONS = {"9:16": "vertical 9:16", "16:9": "horizontal 16:9", "1:1": "square 1:1", "4:5": "vertical 4:5"}
+
+
+def composition(aspect: str | None) -> str:
+    return COMPOSITIONS.get((aspect or "9:16").strip(), COMPOSITIONS["9:16"])
+
+
+def _mock_script(topic: str, style: str, duration_sec: int, aspect: str | None = None) -> dict:
     """Zero-cost template script — no LLM call. For testing the pipeline
     without an Anthropic API key. Narration is generic filler, not a real
     story — swap SCRIPT_MODE back to 'llm' for actual content."""
@@ -176,7 +186,7 @@ def _mock_script(topic: str, style: str, duration_sec: int) -> dict:
         {
             "narration": f"{beats[i]}. Тестовая озвучка сцены {i + 1} из {n} по теме: {short_topic}.",
             "image_prompt": f"{style} style photo illustrating '{short_topic}', scene {i + 1} of {n}, "
-            f"vertical 9:16 composition, no text, no logos, no captions",
+            f"{composition(aspect)} composition, no text, no logos, no captions",
             "shots": [
                 {"framing": "wide establishing shot", "action": f"scene {i + 1} begins"},
                 {"framing": "close-up", "action": f"detail of scene {i + 1}"},
@@ -194,7 +204,7 @@ def _mock_script(topic: str, style: str, duration_sec: int) -> dict:
     }
 
 
-def _mock_ad_script(brief, style: str, duration_sec: int) -> dict:
+def _mock_ad_script(brief, style: str, duration_sec: int, aspect: str | None = None) -> dict:
     """Шаблонная реклама без модели: проверяет остальной конвейер за ноль денег.
 
     Такты берутся настоящие — те же, что ушли бы в модель, — поэтому по моку
@@ -208,7 +218,7 @@ def _mock_ad_script(brief, style: str, duration_sec: int) -> dict:
             "narration": f"{beat.replace('_', ' ').capitalize()}. Тестовая озвучка "
                          f"такта {i + 1} из {len(beats)} для «{brief.product_name}».",
             "image_prompt": f"{style} advertising frame for '{brief.product_name}', "
-                            f"beat {beat}, vertical 9:16 composition, no text, no logos",
+                            f"beat {beat}, {composition(aspect)} composition, no text, no logos",
             "purpose": beat,
             "shots": [
                 {"framing": "hero product shot", "action": f"{beat}: product in frame",
@@ -229,7 +239,7 @@ def _mock_ad_script(brief, style: str, duration_sec: int) -> dict:
 
 
 def generate_script(cfg: Config, topic: str, style: str, duration_sec: int, brief=None,
-                    reference_urls: list[str] | None = None) -> dict:
+                    reference_urls: list[str] | None = None, aspect: str | None = None) -> dict:
     """Returns {"title": str, "scenes": [{"narration", "image_prompt"}, ...], "cost_usd": float}.
 
     `brief` — ProductBrief. Если он есть, пишется реклама: другая структура,
@@ -238,15 +248,21 @@ def generate_script(cfg: Config, topic: str, style: str, duration_sec: int, brie
 
     `reference_urls` — снимки товара. Режиссёр с поддержкой изображений
     (Anthropic) видит их и описывает товар по фото, а не по догадке.
+
+    `aspect` — формат кадра проекта; кадры сочиняются под него.
     """
+    frame = composition(aspect)
     if cfg.effective_script_mode == "mock":
         log.info("script: SCRIPT_MODE=mock — skipping Claude, using template scenes")
-        return _mock_ad_script(brief, style, duration_sec) if brief else _mock_script(topic, style, duration_sec)
+        if brief:
+            return _mock_ad_script(brief, style, duration_sec, aspect)
+        return _mock_script(topic, style, duration_sec, aspect)
 
     if brief is not None:
         n = len(brief.structure(duration_sec))
         words_per_scene = _words_per_scene(duration_sec, n)
         prompt = product_brief.ad_prompt(brief, style, duration_sec, words_per_scene)
+        prompt += f"\n\nFrame format: {frame}. Compose every image_prompt for a {frame} frame."
         schema = AD_SCENES_SCHEMA
         log.info("script: реклама «%s», такты %s", brief.product_name, brief.structure(duration_sec))
         images = [u for u in (reference_urls or []) if u][:MAX_DIRECTOR_IMAGES]
@@ -255,7 +271,7 @@ def generate_script(cfg: Config, topic: str, style: str, duration_sec: int, brie
     n = _scene_count(duration_sec)
     words_per_scene = _words_per_scene(duration_sec, n)
 
-    prompt = f"""You are a short-form video scriptwriter for vertical (9:16) social videos.
+    prompt = f"""You are a short-form video scriptwriter for {frame} social videos.
 
 Write a script for a {duration_sec}-second video.
 
@@ -272,7 +288,7 @@ Requirements:
   character with age, hair, exact clothing; name the location, the colour palette and
   the lighting. This text is pasted into every image prompt, so it must be concrete
   and must never contradict itself.
-- Each image_prompt is in ENGLISH, describes a single striking {style} shot for that scene, mentions vertical 9:16 composition, and contains NO text/captions/logos in the image.
+- Each image_prompt is in ENGLISH, describes a single striking {style} shot for that scene, mentions {frame} composition, and contains NO text/captions/logos in the image.
 - Give each scene 2-3 `shots`: different framings of the SAME moment and the SAME
   characters — for example a wide shot, then a close-up on a face or hands. Shots are
   camera angles on one continuous action, not separate events with new people.

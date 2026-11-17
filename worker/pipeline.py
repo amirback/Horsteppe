@@ -756,7 +756,8 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
                 # есть: обычный вызов остаётся прежним.
                 extra = {"reference_urls": reference_urls} if brief is not None and reference_urls else {}
                 script = script_step.generate_script(
-                    cfg, project["topic"], project["style"], project["duration_sec"], brief=brief, **extra
+                    cfg, project["topic"], project["style"], project["duration_sec"], brief=brief,
+                    aspect=project.get("aspect_ratio") or cfg.video_format, **extra
                 )
             except script_step.ScriptFailed as e:
                 # Провайдер мог ответить, взять деньги и выдать негодный
@@ -868,7 +869,8 @@ def run_project(cfg: Config, db: Db, project_id: str) -> None:
             db.set_progress(project_id, f"Кадры: {i + 1}/{shot_total}")
             image_path = work_dir / f"shot_{i:02d}.png"
             try:
-                cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)
+                with image_step.frame(project.get("aspect_ratio") or cfg.video_format):
+                    cost = image_step.generate_image(cfg, shot["visual_prompt"], image_path, index=i)
             except image_step.ImageError as e:
                 # Один неудавшийся кадр не стоит целого фильма. Раньше сбой
                 # здесь ронял проект — и это при том, что картинки делают
